@@ -1,0 +1,60 @@
+{
+  "name": "kimi-proxy",
+  "description": "An agent-friendly LLM proxy that cleans up Kimi K2 output, fixes tool calls, and normalizes responses for OpenAI/Anthropic-style clients.",
+  "version": "0.0.1",
+  "license": "MIT",
+  "author": "abcpro1",
+  "repository": "github:abcpro1/kimi-proxy",
+  "private": false,
+  "type": "module",
+  "bin": {
+    "kimi-proxy": "dist/index.js",
+    "kj": "dist/index.js"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "packageManager": "pnpm@10.18.1",
+  "files": [
+    "/dist",
+    "/frontend/dist"
+  ],
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "build": "tsc -p tsconfig.json",
+    "build:frontend": "pnpm -C frontend build",
+    "build:all": "pnpm build:frontend && npm run build",
+    "prepack": "npm run build:all",
+    "start": "node dist/index.js",
+    "test": "vitest run --exclude tests/integration",
+    "test:integration": "vitest run tests/integration",
+    "lint": "tsc --noEmit && eslint .",
+    "format": "prettier --write ."
+  },
+  "dependencies": {
+    "@fastify/cors": "^10.0.0",
+    "@fastify/static": "^8.3.0",
+    "better-sqlite3": "^9.1.2",
+    "dotenv": "^16.4.5",
+    "fastify": "^5.0.0",
+    "google-auth-library": "^9.14.1",
+    "nanoid": "^5.0.7",
+    "openai": "^6.9.1",
+    "pino": "^9.5.0",
+    "undici": "^7.0.0",
+    "yaml": "^2.6.0",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.39.1",
+    "@types/better-sqlite3": "^7.6.9",
+    "@types/node": "^22.9.0",
+    "eslint": "^9.14.0",
+    "pino-pretty": "^11.2.2",
+    "prettier": "^3.6.2",
+    "tsx": "^4.19.1",
+    "typescript": "^5.6.3",
+    "typescript-eslint": "^8.47.0",
+    "vitest": "^2.1.4"
+  }
+}

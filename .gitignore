@@ -1,0 +1,11 @@
+.env
+/data
+
+*.pyc
+*.pyo
+
+node_modules/
+dist/
+.pnpm-store/
+secrets/
+model-config.yaml

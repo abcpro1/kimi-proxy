@@ -1,0 +1,56 @@
+services:
+  llm-proxy:
+    build: .
+    ports:
+      - "127.0.0.1:8001:8000"
+    working_dir: /app
+    env_file:
+      - .env
+    environment:
+      - PORT=8000
+    volumes:
+      - .:/app
+    command: sh -c "corepack enable && pnpm install && pnpm run dev"
+    develop:
+      watch:
+        - action: sync
+          path: .
+          target: /app
+          ignore:
+            - node_modules/
+            - dist/
+            - data/
+            - frontend/node_modules/
+            - frontend/dist/
+            - .git/
+        - action: restart
+          path: pnpm-lock.yaml
+        - action: rebuild
+          path: package.json
+        - action: restart
+          path: .env
+        - action: restart
+          path: model-config.yaml
+
+  frontend:
+    image: node:20-alpine
+    working_dir: /app
+    ports:
+      - "127.0.0.1:8002:5173"
+    volumes:
+      - ./frontend:/app
+    command: sh -c "corepack enable && pnpm install && pnpm run dev -- --host 0.0.0.0"
+    depends_on:
+      - llm-proxy
+    develop:
+      watch:
+        - action: sync
+          path: ./frontend
+          target: /app
+          ignore:
+            - node_modules/
+            - dist/
+        - action: restart
+          path: ./frontend/pnpm-lock.yaml
+        - action: restart
+          path: ./frontend/package.json

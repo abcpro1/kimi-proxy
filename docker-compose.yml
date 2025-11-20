@@ -1,0 +1,18 @@
+services:
+  llm-proxy:
+    build: .
+    ports:
+      - "127.0.0.1:8000:8000"
+    environment:
+      - PORT=8000
+      - HOST=0.0.0.0
+    env_file:
+      - .env
+    volumes:
+      - ./model-config.yaml:/app/model-config.yaml:ro
+      - ./secrets:/app/secrets:ro
+      - llm-proxy-data:/app/data
+    restart: unless-stopped
+
+volumes:
+  llm-proxy-data:

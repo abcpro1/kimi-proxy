@@ -1,0 +1,11 @@
+I've resolved the issue where the header bar wasn't adapting to the system's dark mode.
+
+**Fix Details:**
+1.  **Introduced CSS Variable:** I created a new CSS variable, `--header-bg-blur`, to manage the translucent background color of the header.
+2.  **Context-Aware Definitions:** I defined this variable in:
+    *   `:root` (for the default light mode).
+    *   `@media (prefers-color-scheme: dark)` (for the system-default dark mode).
+    *   `[data-theme="light"]` and `[data-theme="dark"]` (for user-selected overrides).
+3.  **Updated Component Style:** I modified the `.navbar` class in `frontend/src/index.css` to use `var(--header-bg-blur)` and removed the conflicting hardcoded `background-color` and the specific `[data-theme="dark"] .navbar` override block.
+
+This ensures the header background correctly switches to the dark translucent color when the system is in dark mode and the user hasn't manually selected a theme. The build has been verified and passed.

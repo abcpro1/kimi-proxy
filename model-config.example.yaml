@@ -1,0 +1,12 @@
+default_strategy: round_robin
+models:
+  - name: kimi-k2-thinking
+    provider: vertex
+    model: moonshotai/kimi-k2-thinking-maas
+    # Optional: enforce tool call consistency for reliable agentic workflows
+    ensure_tool_call: true
+  - name: kimi-k2-thinking
+    provider: openrouter
+    model: moonshot-ai/kimi-k2-thinking
+    apiKey: $OPENROUTER_DEFAULT_KEY
+    weight: 2
