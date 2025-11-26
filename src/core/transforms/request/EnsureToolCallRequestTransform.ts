@@ -143,11 +143,13 @@ export class EnsureToolCallRequestTransform implements RequestTransform {
 
     const messagesSinceLastUser = getMessagesSinceLastUser(messages);
 
-    // Search for any assistant message without tool calls
+    // Search for assistant messages
     for (const m of messagesSinceLastUser) {
       if (isJsonObject(m) && m.role === "assistant") {
-        const hasToolCalls =
-          Array.isArray(m.tool_calls) && m.tool_calls.length > 0;
+        const toolCalls = Array.isArray(m.tool_calls) ? m.tool_calls : [];
+        const hasToolCalls = toolCalls.length > 0;
+
+        // Check for message without tool calls (normal termination pattern)
         if (!hasToolCalls) {
           // Request synthetic response to prevent infinite loops
           requestSyntheticResponse(requestState);
@@ -157,10 +159,41 @@ export class EnsureToolCallRequestTransform implements RequestTransform {
           );
           return true;
         }
+
+        // Check for TodoWrite + keyword heuristics
+        if (
+          toolCalls.length === 1 &&
+          this.checkTerminationHeuristic(m, toolCalls[0])
+        ) {
+          requestSyntheticResponse(requestState);
+          logger.warn(
+            { requestId },
+            "Detected TodoWrite + termination keywords, requesting synthetic response",
+          );
+          return true;
+        }
       }
     }
 
     return false;
+  }
+
+  private checkTerminationHeuristic(
+    message: JsonObject,
+    toolCall: JsonValue,
+  ): boolean {
+    // Check message content contains termination keywords
+    if (!hasCaseInsensitiveTerminationKeywords(message.content)) {
+      return false;
+    }
+
+    // Check tool name is TodoWrite
+    const toolName = extractToolName(toolCall);
+    if (!toolName || toolName.toLowerCase() !== "todowrite") {
+      return false;
+    }
+
+    return true;
   }
 }
 
@@ -173,6 +206,29 @@ function extractToolName(tool: JsonValue): string | null {
     return null;
   }
   return typeof functionDef.name === "string" ? functionDef.name : null;
+}
+
+function hasCaseInsensitiveTerminationKeywords(
+  content: JsonValue | undefined,
+): boolean {
+  if (content === undefined || content === null) {
+    return false;
+  }
+  if (typeof content === "string") {
+    return /summary|changes/i.test(content);
+  }
+  if (Array.isArray(content)) {
+    return content.some((entry) => {
+      if (typeof entry === "string") {
+        return /summary|changes/i.test(entry);
+      }
+      if (isJsonObject(entry) && typeof entry.text === "string") {
+        return /summary|changes/i.test(entry.text);
+      }
+      return false;
+    });
+  }
+  return false;
 }
 
 function asJsonObject(value: JsonValue | undefined): JsonObject {

@@ -23,10 +23,10 @@ import {
 } from "./core/converters/openaiPassthrough.js";
 import { AnthropicToOpenAIConverter } from "./core/converters/anthropicToOpenAI.js";
 import { DisableStreamingTransform } from "./core/transforms/request/DisableStreamingTransform.js";
-import { ClampMaxTokensTransform } from "./core/transforms/request/ClampMaxTokensTransform.js";
 import { EnsureToolCallRequestTransform } from "./core/transforms/request/EnsureToolCallRequestTransform.js";
 import { KimiResponseTransform } from "./core/transforms/response/KimiResponseTransform.js";
 import { EnsureToolCallResponseTransform } from "./core/transforms/response/EnsureToolCallResponseTransform.js";
+import { ValidateToolArgumentsTransform } from "./core/transforms/response/ValidateToolArgumentsTransform.js";
 import {
   ClientFormat,
   ProxyOperation,
@@ -50,6 +50,7 @@ import {
   getEnsureToolCallState,
 } from "./core/ensureToolCall.js";
 import { setPipelineMaxAttempts } from "./core/pipelineControl.js";
+import { CleanupExtraPropertiesResponseTransform } from "./core/transforms/response/CleanupExtraPropertiesResponseTransform.js";
 
 interface ProxyHandlerOptions {
   operation: ProxyOperation;
@@ -130,12 +131,13 @@ export async function createServer(
 
   const requestTransforms: RequestTransform[] = [
     new DisableStreamingTransform(),
-    new ClampMaxTokensTransform(),
     new EnsureToolCallRequestTransform(),
   ];
   const responseTransforms: ResponseTransform[] = [
+    new CleanupExtraPropertiesResponseTransform(),
     new KimiResponseTransform(),
     new EnsureToolCallResponseTransform(),
+    new ValidateToolArgumentsTransform(),
   ];
 
   const pipeline = new LLMProxyPipeline({
@@ -306,6 +308,18 @@ async function handleProxyRequest(
     );
   } catch (error) {
     logger.error({ err: error }, "Pipeline execution failed");
+
+    deps.logStore.append({
+      method: req.method,
+      url: req.url,
+      statusCode: 500,
+      model: undefined,
+      requestBody: body,
+      responseBody: { error: { message: "Internal proxy error" } },
+      providerRequestBody: null,
+      providerResponseBody: null,
+    });
+
     reply.status(500).send({ error: { message: "Internal proxy error" } });
   }
 }
@@ -402,6 +416,18 @@ async function handleAnthropicMessages(
     );
   } catch (error) {
     logger.error({ err: error }, "Anthropic messages handling failed");
+
+    deps.logStore.append({
+      method: req.method,
+      url: req.url,
+      statusCode: 500,
+      model: undefined,
+      requestBody: body,
+      responseBody: { error: { message: "Internal proxy error" } },
+      providerRequestBody: null,
+      providerResponseBody: null,
+    });
+
     reply.status(500).send({ error: { message: "Internal proxy error" } });
   }
 }
@@ -448,10 +474,28 @@ async function sendResponse(
   }
 
   if (request.clientFormat === ClientFormat.AnthropicMessages) {
-    reply.header("Content-Type", "text/event-stream");
-    reply.header("Cache-Control", "no-cache");
-    reply.header("Connection", "keep-alive");
-    reply.send(anthropicStreamFromResponse(payload, streamingOptions));
+    // Using reply.hijack() to bypass Fastify's default response handling which
+    // incorrectly sets Content-Length: 0 for streaming responses in some environments.
+    // This allows us to pipe the stream directly to the raw socket.
+    reply.hijack();
+    reply.raw.setHeader("Content-Type", "text/event-stream");
+    reply.raw.setHeader("Cache-Control", "no-cache");
+    reply.raw.setHeader("Connection", "keep-alive");
+    reply.removeHeader("Content-Length");
+
+    const stream = anthropicStreamFromResponse(payload, streamingOptions);
+    try {
+      await pipeline(stream, reply.raw);
+    } catch (error) {
+      if (isPrematureCloseError(error)) {
+        logger.debug(
+          { err: error },
+          "Client disconnected before streaming completed",
+        );
+      } else {
+        throw error;
+      }
+    }
     return;
   }
 
@@ -481,10 +525,29 @@ async function sendResponse(
     return;
   }
 
-  reply.header("Content-Type", "text/event-stream");
-  reply.header("Cache-Control", "no-cache");
-  reply.header("Connection", "keep-alive");
-  reply.send(openAIStreamFromResponse(payload, streamingOptions));
+  // OpenAI Chat Completions format
+  // Using reply.hijack() to bypass Fastify's default response handling which
+  // incorrectly sets Content-Length: 0 for streaming responses in some environments.
+  // This allows us to pipe the stream directly to the raw socket.
+  reply.hijack();
+  reply.raw.setHeader("Content-Type", "text/event-stream");
+  reply.raw.setHeader("Cache-Control", "no-cache");
+  reply.raw.setHeader("Connection", "keep-alive");
+  reply.removeHeader("Content-Length");
+
+  const stream = openAIStreamFromResponse(payload, streamingOptions);
+  try {
+    await pipeline(stream, reply.raw);
+  } catch (error) {
+    if (isPrematureCloseError(error)) {
+      logger.debug(
+        { err: error },
+        "Client disconnected before streaming completed",
+      );
+    } else {
+      throw error;
+    }
+  }
 }
 
 function normalizeHeaders(

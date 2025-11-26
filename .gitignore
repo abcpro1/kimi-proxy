@@ -9,3 +9,6 @@ dist/
 .pnpm-store/
 secrets/
 model-config.yaml
+/.vscode/*
+!/.vscode/launch.json
+!/.vscode/tasks.json

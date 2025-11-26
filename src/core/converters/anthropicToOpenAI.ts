@@ -43,6 +43,12 @@ export class AnthropicToOpenAIConverter
     _context: ConversionContext<AnthropicMessageRequest>,
   ): AnthropicMessageResponse {
     void _context;
+
+    // Validate response body before conversion
+    if (!body) {
+      throw new Error("Cannot convert response: body is null or undefined");
+    }
+
     return openaiToAnthropicResponse(body);
   }
 }

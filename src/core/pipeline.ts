@@ -114,6 +114,21 @@ export class LLMProxyPipeline {
         });
       }
 
+      // Validate provider response body before conversion
+      if (!providerResponse.body || typeof providerResponse.body !== "object") {
+        logger.error(
+          {
+            requestId: request.id,
+            status: providerResponse.status,
+            bodyType: typeof providerResponse.body,
+          },
+          "Invalid provider response: body is missing or not an object",
+        );
+        throw new Error(
+          `Invalid provider response: body is ${typeof providerResponse.body}, body: ${JSON.stringify(providerResponse.body)}`,
+        );
+      }
+
       const clientResponse = await converter.convertResponse(
         providerResponse.body,
         conversionContext,

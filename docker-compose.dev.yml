@@ -1,16 +1,33 @@
 services:
-  llm-proxy:
+  llm-proxy-dev:
     build: .
     ports:
       - "127.0.0.1:8001:8000"
+      # Expose Node inspector when running in debug mode
+      - "127.0.0.1:9229:9229"
     working_dir: /app
     env_file:
       - .env
     environment:
       - PORT=8000
+      # Enable Node inspector by default for dev; skip via DEBUG=0 if desired
+      - DEBUG=1
+      # Allow pnpm to remove conflicting node_modules without TTY prompts
+      - CI=true
     volumes:
+      # Mount source for live reload; keep container node_modules isolated
       - .:/app
-    command: sh -c "corepack enable && pnpm install && pnpm run dev"
+      - /app/node_modules
+    command: >-
+      sh -c '
+        set -ex;
+        corepack enable && pnpm install;
+        if [ "${DEBUG}" = "0" ]; then
+          node --import tsx src/index.ts;
+        else
+          node --inspect=0.0.0.0:9229 --import tsx src/index.ts;
+        fi
+      '
     develop:
       watch:
         - action: sync
@@ -32,16 +49,22 @@ services:
         - action: restart
           path: model-config.yaml
 
-  frontend:
+  frontend-dev:
     image: node:20-alpine
     working_dir: /app
     ports:
       - "127.0.0.1:8002:5173"
+    environment:
+      # Allow pnpm to remove conflicting node_modules without TTY prompts
+      - CI=true
     volumes:
+      # Mount source code for live reload
       - ./frontend:/app
+      # Keep node_modules inside the container to avoid host-shadowing on restart
+      - /app/node_modules
     command: sh -c "corepack enable && pnpm install && pnpm run dev -- --host 0.0.0.0"
     depends_on:
-      - llm-proxy
+      - llm-proxy-dev
     develop:
       watch:
         - action: sync

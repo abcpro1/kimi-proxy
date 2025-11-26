@@ -236,7 +236,7 @@ export function anthropicToOpenAIRequest(
     messages: openaiMessages,
     stream: request.stream ?? false,
     temperature: request.temperature ?? 1,
-    max_tokens: request.max_tokens ?? 4096,
+    max_tokens: request.max_tokens ?? 256000,
   };
 
   if (tools.length) {
@@ -262,6 +262,21 @@ export function anthropicToOpenAIRequest(
 export function openaiToAnthropicResponse(
   openaiResp: OpenAIChatResponse,
 ): AnthropicMessageResponse {
+  // Validate response structure
+  if (!openaiResp) {
+    throw new Error("Invalid OpenAI response: response is null or undefined");
+  }
+
+  if (!openaiResp.choices || !Array.isArray(openaiResp.choices)) {
+    throw new Error(
+      "Invalid OpenAI response: missing or invalid choices array",
+    );
+  }
+
+  if (openaiResp.choices.length === 0) {
+    throw new Error("Invalid OpenAI response: choices array is empty");
+  }
+
   const [choice] = openaiResp.choices;
   const message: OpenAIChatMessage = choice.message ?? {};
   const contentBlocks: AnthropicContentBlock[] = [];
@@ -310,14 +325,9 @@ export function openaiToAnthropicResponse(
   if (Array.isArray(toolCalls) && toolCalls.length) {
     stopReason = "tool_use";
     for (const toolCall of toolCalls) {
-      let parsedArgs: JsonObject;
-      try {
-        parsedArgs = JSON.parse(
-          toolCall.function?.arguments ?? "{}",
-        ) as JsonObject;
-      } catch {
-        parsedArgs = { raw_arguments: toolCall.function?.arguments };
-      }
+      const parsedArgs = JSON.parse(
+        toolCall.function?.arguments ?? "{}",
+      ) as JsonObject;
       contentBlocks.push({
         type: "tool_use",
         id: toolCall.id,

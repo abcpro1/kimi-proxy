@@ -1,4 +1,10 @@
-import React, { useState, useEffect, Suspense, useCallback } from "react";
+import React, {
+  useState,
+  useEffect,
+  Suspense,
+  useCallback,
+  useRef,
+} from "react";
 import { useUIStore } from "./store/uiStore";
 
 // Lazy load the heavy JSON viewer component
@@ -213,6 +219,9 @@ const Dashboard = () => {
 
   const pageSize = 20;
 
+  // Keep ref of current logs for comparison in fetchLogs
+  const logsRef = useRef(logs);
+
   // Debounce search input
   useEffect(() => {
     const timer = setTimeout(() => {
@@ -222,7 +231,12 @@ const Dashboard = () => {
     return () => clearTimeout(timer);
   }, [search]);
 
-  const fetchLogs = async () => {
+  // Keep logsRef updated
+  useEffect(() => {
+    logsRef.current = logs;
+  }, [logs]);
+
+  const fetchLogs = useCallback(async () => {
     // Only set loading if not auto-refreshing to avoid UI flicker
     if (!autoRefresh) setLoading(true);
 
@@ -239,20 +253,20 @@ const Dashboard = () => {
       const res = await fetch(`/api/logs?${queryParams.toString()}`);
       const data = await res.json();
 
-      setLogs((prevLogs) => {
-        // Simple deep check to avoid re-renders if data is identical
-        if (JSON.stringify(prevLogs) === JSON.stringify(data.items)) {
-          return prevLogs;
-        }
-        return data.items;
-      });
+      // Simple identity check to avoid re-renders if data hasn't changed
+      const prevLogs = logsRef.current;
+      logsRef.current = data.items;
+
+      if (prevLogs !== data.items) {
+        setLogs(data.items);
+      }
       setTotal(data.total);
     } catch (err) {
       console.error("Failed to fetch logs", err);
     } finally {
       setLoading(false);
     }
-  };
+  }, [autoRefresh, page, pageSize, debouncedSearch]);
 
   // Initial load & updates
   useEffect(() => {
@@ -261,12 +275,49 @@ const Dashboard = () => {
 
   // Auto refresh interval
   useEffect(() => {
-    let interval: any;
-    if (autoRefresh) {
-      interval = setInterval(fetchLogs, 2000);
+    if (!autoRefresh) return;
+    const id = setInterval(fetchLogs, 2000);
+    return () => clearInterval(id);
+  }, [fetchLogs]);
+
+  // Cleanup tabStates for logs not in current page (prevents memory leak)
+  useEffect(() => {
+    // Get IDs of logs currently in the page
+    const currentLogIds = new Set(logs.map((log) => log.id));
+
+    // Get current tab states
+    const tabStates = useUIStore.getState().tabStates;
+
+    // Find tab state keys that don't belong to current page logs
+    const keysToRemove: string[] = [];
+    for (const key of Object.keys(tabStates)) {
+      // Extract log ID from keys like "log-123-request" or "log-123-response"
+      const match = key.match(/^log-(\d+)-(request|response)$/);
+      if (match) {
+        const logId = parseInt(match[1], 10);
+        if (!currentLogIds.has(logId)) {
+          keysToRemove.push(key);
+        }
+      }
     }
-    return () => clearInterval(interval);
-  }, [autoRefresh, page, debouncedSearch]); // Depend on current view state
+
+    // Remove stale tab states
+    if (keysToRemove.length > 0) {
+      useUIStore.setState((state) => {
+        const newTabStates = { ...state.tabStates };
+        keysToRemove.forEach((key) => {
+          delete newTabStates[key];
+        });
+        return { ...state, tabStates: newTabStates };
+      });
+    }
+
+    // Also cleanup expandedLogId if it's not for a log in current page
+    const expandedLogId = useUIStore.getState().expandedLogId;
+    if (expandedLogId !== null && !currentLogIds.has(expandedLogId)) {
+      useUIStore.setState({ expandedLogId: null });
+    }
+  }, [page, logs]); // Re-run when page or logs change
 
   // Theme toggle
   useEffect(() => {

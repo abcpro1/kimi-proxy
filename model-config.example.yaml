@@ -10,3 +10,9 @@ models:
     model: moonshot-ai/kimi-k2-thinking
     apiKey: $OPENROUTER_DEFAULT_KEY
     weight: 2
+  - name: minimax-m2
+    provider: vertex
+    model: minimaxai/minimax-m2-maas
+  - name: qwen3-coder
+    provider: vertex
+    model: qwen/qwen3-coder-480b-a35b-instruct-maas

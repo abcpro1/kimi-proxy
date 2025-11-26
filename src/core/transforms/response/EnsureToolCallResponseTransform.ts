@@ -8,7 +8,7 @@ import {
   getEnsureToolCallState,
   getMessagesSinceLastUser,
 } from "../../ensureToolCall.js";
-import { clearRetryRequest, requestRetry } from "../../pipelineControl.js";
+import { requestRetry } from "../../pipelineControl.js";
 import { logger } from "../../../utils/logger.js";
 
 export class EnsureToolCallResponseTransform implements ResponseTransform {
@@ -45,6 +45,21 @@ export class EnsureToolCallResponseTransform implements ResponseTransform {
       return;
     }
 
+    // Check for TodoWrite + keyword heuristics
+    if (this.checkTerminationHeuristic(context)) {
+      console.log(
+        "[EnsureToolCall] TodoWrite + keyword heuristics detected. Accepting as termination.",
+      );
+      ensureState.pendingReminder = false;
+      logger.info(
+        {
+          requestId: context.request.id,
+        },
+        "EnsureToolCall satisfied by TodoWrite + keyword heuristics",
+      );
+      return;
+    }
+
     const body = asJsonObject(context.providerResponse.body);
     const choices = Array.isArray(body.choices)
       ? body.choices
@@ -75,7 +90,8 @@ export class EnsureToolCallResponseTransform implements ResponseTransform {
 
         if (
           toolName?.toLowerCase() === ensureState.terminationToolName ||
-          toolName?.toLowerCase() === "final"
+          toolName?.toLowerCase() === "final" ||
+          /(call_*)?[0-9]+/.test(toolName ?? "")
         ) {
           console.log(`[EnsureToolCall] Termination tool "${toolName}" used.`);
 
@@ -169,7 +185,6 @@ export class EnsureToolCallResponseTransform implements ResponseTransform {
       return;
     }
 
-    clearRetryRequest(context.request.state);
     ensureState.pendingReminder = false;
     logger.info(
       {
@@ -195,6 +210,41 @@ export class EnsureToolCallResponseTransform implements ResponseTransform {
     }
 
     return false;
+  }
+
+  private checkTerminationHeuristic(
+    context: ResponseTransformContext,
+  ): boolean {
+    if (!context.providerResponse?.body) return false;
+
+    const body = asJsonObject(context.providerResponse.body);
+    const choices = Array.isArray(body.choices) ? body.choices : [];
+    if (choices.length === 0) return false;
+
+    const firstChoice = choices[0];
+    if (!isJsonObject(firstChoice)) return false;
+
+    const message = asJsonObject(firstChoice.message);
+
+    // Check message content termination keywords
+    if (!hasCaseInsensitiveTerminationKeywords(message.content)) {
+      return false;
+    }
+
+    // Check exactly one tool call and it's TodoWrite
+    const toolCalls = Array.isArray(message.tool_calls)
+      ? message.tool_calls
+      : [];
+    if (toolCalls.length !== 1) {
+      return false;
+    }
+
+    const toolName = extractToolName(toolCalls[0]);
+    if (!toolName || toolName.toLowerCase() !== "todowrite") {
+      return false;
+    }
+
+    return true;
   }
 }
 
@@ -289,4 +339,27 @@ function hasMeaningfulContent(content: JsonValue | undefined): boolean {
     return Object.keys(content).length > 0;
   }
   return true;
+}
+
+function hasCaseInsensitiveTerminationKeywords(
+  content: JsonValue | undefined,
+): boolean {
+  if (content === undefined || content === null) {
+    return false;
+  }
+  if (typeof content === "string") {
+    return /summary|changes/i.test(content);
+  }
+  if (Array.isArray(content)) {
+    return content.some((entry) => {
+      if (typeof entry === "string") {
+        return /summary|changes/i.test(entry);
+      }
+      if (isJsonObject(entry) && typeof entry.text === "string") {
+        return /summary|changes/i.test(entry.text);
+      }
+      return false;
+    });
+  }
+  return false;
 }

@@ -44,6 +44,9 @@ importers:
         specifier: ^3.23.8
         version: 3.25.76
     devDependencies:
+      "@ai-sdk/openai-compatible":
+        specifier: ^1.0.28
+        version: 1.0.28(zod@3.25.76)
       "@eslint/js":
         specifier: ^9.39.1
         version: 9.39.1
@@ -110,6 +113,31 @@ importers:
         version: 4.5.14(@types/node@22.19.1)
 
 packages:
+  "@ai-sdk/openai-compatible@1.0.28":
+    resolution:
+      {
+        integrity: sha512-yKubDxLYtXyGUzkr9lNStf/lE/I+Okc8tmotvyABhsQHHieLKk6oV5fJeRJxhr67Ejhg+FRnwUOxAmjRoFM4dA==,
+      }
+    engines: { node: ">=18" }
+    peerDependencies:
+      zod: ^3.25.76 || ^4.1.8
+
+  "@ai-sdk/provider-utils@3.0.18":
+    resolution:
+      {
+        integrity: sha512-ypv1xXMsgGcNKUP+hglKqtdDuMg68nWHucPPAhIENrbFAI+xCHiqPVN8Zllxyv1TNZwGWUghPxJXU+Mqps0YRQ==,
+      }
+    engines: { node: ">=18" }
+    peerDependencies:
+      zod: ^3.25.76 || ^4.1.8
+
+  "@ai-sdk/provider@2.0.0":
+    resolution:
+      {
+        integrity: sha512-6o7Y2SeO9vFKB8lArHXehNuusnpddKPk7xqL7T2/b+OvXMRIXUO1rR4wcv1hAFUAT9avGZshty3Wlua/XA7TvA==,
+      }
+    engines: { node: ">=18" }
+
   "@babel/code-frame@7.27.1":
     resolution:
       {
@@ -1310,6 +1338,12 @@ packages:
     cpu: [x64]
     os: [win32]
 
+  "@standard-schema/spec@1.0.0":
+    resolution:
+      {
+        integrity: sha512-m2bOd0f2RT9k8QJx1JN85cZYyH1RqFBdlwtkSlf4tBDYLCiiZnv1fIIwacK6cqwXavOydf0NPToMQgpKq+dVlA==,
+      }
+
   "@types/babel__core@7.20.5":
     resolution:
       {
@@ -2099,6 +2133,13 @@ packages:
       }
     engines: { node: ">=0.8.x" }
 
+  eventsource-parser@3.0.6:
+    resolution:
+      {
+        integrity: sha512-Vo1ab+QXPzZ4tCa8SwIHJFaSzy4R6SHf7BY79rFBDf0idraZWAkYrDjDj8uWaSm3S2TK+hJ7/t1CEmZ7jXw+pg==,
+      }
+    engines: { node: ">=18.0.0" }
+
   expand-template@2.0.3:
     resolution:
       {
@@ -2552,6 +2593,12 @@ packages:
     resolution:
       {
         integrity: sha512-NM8/P9n3XjXhIZn1lLhkFaACTOURQXjWhV4BA/RnOv8xvgqtqpAX9IO4mRQxSx1Rlo4tqzeqb0sOlruaOy3dug==,
+      }
+
+  json-schema@0.4.0:
+    resolution:
+      {
+        integrity: sha512-es94M3nTIfsEPisRafak+HDLfHXnKBhV3vU5eqPcS3flIWqcxJWgXHXiey3YrpaNsanY5ei1VoYEbOzijuq9BA==,
       }
 
   json-stable-stringify-without-jsonify@1.0.1:
@@ -3708,6 +3755,23 @@ packages:
         optional: true
 
 snapshots:
+  "@ai-sdk/openai-compatible@1.0.28(zod@3.25.76)":
+    dependencies:
+      "@ai-sdk/provider": 2.0.0
+      "@ai-sdk/provider-utils": 3.0.18(zod@3.25.76)
+      zod: 3.25.76
+
+  "@ai-sdk/provider-utils@3.0.18(zod@3.25.76)":
+    dependencies:
+      "@ai-sdk/provider": 2.0.0
+      "@standard-schema/spec": 1.0.0
+      eventsource-parser: 3.0.6
+      zod: 3.25.76
+
+  "@ai-sdk/provider@2.0.0":
+    dependencies:
+      json-schema: 0.4.0
+
   "@babel/code-frame@7.27.1":
     dependencies:
       "@babel/helper-validator-identifier": 7.28.5
@@ -4254,6 +4318,8 @@ snapshots:
 
   "@rollup/rollup-win32-x64-msvc@4.53.3":
     optional: true
+
+  "@standard-schema/spec@1.0.0": {}
 
   "@types/babel__core@7.20.5":
     dependencies:
@@ -4816,6 +4882,8 @@ snapshots:
 
   events@3.3.0: {}
 
+  eventsource-parser@3.0.6: {}
+
   expand-template@2.0.3: {}
 
   expect-type@1.2.2: {}
@@ -5073,6 +5141,8 @@ snapshots:
   json-schema-traverse@0.4.1: {}
 
   json-schema-traverse@1.0.0: {}
+
+  json-schema@0.4.0: {}
 
   json-stable-stringify-without-jsonify@1.0.1: {}
 

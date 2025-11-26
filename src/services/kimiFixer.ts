@@ -7,26 +7,48 @@ const TOOL_BLOCK_RE =
 const TOOL_SECTION_BEGIN = "<|tool_calls_section_begin|>";
 const TOOL_SECTION_END = "<|tool_calls_section_end|>";
 
-function cleanThinkingTags(text: string): string {
-  if (!text) {
-    return "";
+function cleanText(text: string): string {
+  if (!text) return "";
+  return text
+    .replaceAll("(no content)", "")
+    .replace(/\n\s*\n\s*\n+/g, "\n\n")
+    .trim();
+}
+
+interface CleanThinkingResult {
+  cleaned: string;
+  extractedThinking: string;
+}
+
+function cleanThinking(text: string, extract = false): CleanThinkingResult {
+  if (!text) return { cleaned: "", extractedThinking: "" };
+
+  text = cleanText(text);
+
+  if (!extract) {
+    // For reasoning content: keep inner text in place
+    const tags = /<\/?think(?:ing)?\s*>/gi;
+    const cleaned = text.replace(tags, "");
+    return { cleaned, extractedThinking: "" };
   }
 
-  let cleaned = text.replaceAll("(no content)", "");
+  // For message content: extract inner thinking
+  // For extraction, match only self-closing tags, not orphaned ones
+  const balanced = /<(think|thinking)\s*>(.*?)<\/\1\s*>\s*|/gis;
+  const unBalanced =
+    /<(think|thinking)\s*>(.*?)|(.*?)<\/(think|thinking)\s*>\s*|/gis;
+  const matches = [...text.matchAll(balanced), ...text.matchAll(unBalanced)];
+  const extractedThinking = matches
+    .map((m) => (m[2] || "").trim())
+    .join("\n\n")
+    .trim();
 
-  cleaned = cleaned.replace(
-    /<thinking\s*>(.*?)<\/thinking\s*>/gis,
-    (_, inner) => inner,
-  );
-  cleaned = cleaned.replace(
-    /<think\s*>(.*?)<\/think\s*>/gis,
-    (_, inner) => inner,
-  );
-  cleaned = cleaned.replace(/<\/think(?:ing)?\s*>/gi, "");
-  cleaned = cleaned.replace(/<think(?:ing)?\s*>/gi, "");
-  cleaned = cleaned.replace(/\n\s*\n\s*\n+/g, "\n\n");
+  const cleaned = text.replace(balanced, "").replace(unBalanced, "");
+  return { cleaned, extractedThinking };
+}
 
-  return cleaned.trim();
+function isJsonObject(value: JsonValue | undefined): value is JsonObject {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 interface KimiToolCall extends JsonObject {
@@ -36,10 +58,6 @@ interface KimiToolCall extends JsonObject {
     name: string;
     arguments: string;
   };
-}
-
-function isJsonObject(value: JsonValue | undefined): value is JsonObject {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function parseToolCalls(section: string): KimiToolCall[] {
@@ -67,13 +85,7 @@ function parseToolCalls(section: string): KimiToolCall[] {
       }
     }
 
-    let argumentsJson = argsStr;
-    try {
-      JSON.parse(argsStr);
-    } catch (error) {
-      logger.warn({ err: error }, "Invalid JSON detected in tool arguments");
-      argumentsJson = JSON.stringify({ raw: argsStr });
-    }
+    const argumentsJson = argsStr;
 
     toolCalls.push({
       id: callId,
@@ -134,7 +146,7 @@ export function fixKimiResponse(response: JsonObject): KimiFixResult {
       if (typeof message.reasoning_content === "string") {
         const original = message.reasoning_content;
         const { cleanedText, extracted } = extractToolCallSections(original);
-        const cleanedReasoning = cleanThinkingTags(cleanedText);
+        const cleanedReasoning = cleanThinking(cleanedText, false).cleaned;
         if (cleanedReasoning !== original) {
           console.log("[KimiFixer] Cleaned reasoning content (thinking tags).");
           metadata.cleanedReasoningContent = true;
@@ -153,13 +165,38 @@ export function fixKimiResponse(response: JsonObject): KimiFixResult {
       if (typeof message.content === "string") {
         const original = message.content;
         const { cleanedText, extracted } = extractToolCallSections(original);
-        const normalizedContent = normalizeContentText(cleanedText);
+
+        // Extract thinking tags from content and move to reasoning_content
+        // Handle multiple formats:
+        // 1. <thinking>thinking content</thinking> actual content
+        // 2. thinking content</think> actual content
+        // 3. thinking content... actual content (self-closing or incomplete tag)
+
+        const { cleaned, extractedThinking } = cleanThinking(cleanedText, true);
+        const normalizedContent = cleaned;
+        const thinkingContent = extractedThinking;
+
         if (normalizedContent !== original) {
           console.log(
-            "[KimiFixer] Cleaned message content (text normalization).",
+            "[KimiFixer] Cleaned message content (thinking tags and normalization).",
           );
           metadata.cleanedMessageContent = true;
           message.content = normalizedContent;
+        }
+
+        if (thinkingContent) {
+          // Add extracted thinking content to reasoning_content
+          const existingReasoning =
+            typeof message.reasoning_content === "string"
+              ? message.reasoning_content
+              : "";
+          message.reasoning_content = existingReasoning
+            ? `${existingReasoning}\n\n${thinkingContent}`
+            : thinkingContent;
+          console.log(
+            "[KimiFixer] Extracted thinking content from message.content to reasoning_content.",
+          );
+          metadata.extractedFromContent += 1;
         }
 
         if (extracted.length) {
@@ -219,11 +256,4 @@ function extractToolCallSections(text: string): {
   }
 
   return { cleanedText: remaining.trim(), extracted };
-}
-
-function normalizeContentText(text: string): string {
-  if (!text) {
-    return "";
-  }
-  return text.replaceAll("(no content)", "").trim();
 }

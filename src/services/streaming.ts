@@ -62,11 +62,13 @@ export function openAIStreamFromResponse(
       const model = response.model ?? "unknown-model";
       const respId = response.id ?? "unknown";
       const created = response.created ?? Math.floor(Date.now() / 1000);
+
       const choices = Array.isArray(response.choices)
         ? response.choices.filter((entry): entry is JsonObject =>
             isJsonObject(entry),
           )
         : [];
+
       const [choice] = choices;
       const message = isJsonObject(choice?.message) ? choice.message : {};
       const content = extractTextContent(message.content as JsonValue);
@@ -121,7 +123,9 @@ export function openAIStreamFromResponse(
       }
 
       if (content) {
-        for (const textChunk of chunkString(content, options.chunkSize)) {
+        const contentChunks = chunkString(content, options.chunkSize);
+        for (let i = 0; i < contentChunks.length; i++) {
+          const textChunk = contentChunks[i];
           stream.write(
             `data: ${JSON.stringify({
               ...baseChunk,
@@ -193,21 +197,24 @@ export function openAIStreamFromResponse(
         }
       }
 
-      stream.write(
-        `data: ${JSON.stringify({
-          ...baseChunk,
-          choices: [
-            {
-              index: 0,
-              delta: {},
-              finish_reason:
-                typeof choice?.finish_reason === "string"
-                  ? choice.finish_reason
-                  : "stop",
-            },
-          ],
-        })}\n\n`,
-      );
+      const finalFinishReason =
+        typeof choice?.finish_reason === "string"
+          ? choice.finish_reason
+          : "stop";
+
+      const finalChunk = {
+        ...baseChunk,
+        choices: [
+          {
+            index: 0,
+            delta: {},
+            finish_reason: finalFinishReason,
+          },
+        ],
+      };
+
+      stream.write(`data: ${JSON.stringify(finalChunk)}\n\n`);
+
       stream.write("data: [DONE]\n\n");
     } catch (error) {
       console.error("Stream error:", error);
