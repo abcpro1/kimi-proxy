@@ -12,6 +12,12 @@ export interface ModelDefinition {
   strategy?: LoadBalancingStrategy;
   ensureToolCall?: boolean;
   /**
+   * Profile identifier for alias routing.
+   * When specified, this model can be accessed via the profile prefix in the URL.
+   * Models without a profile are available globally.
+   */
+  profile?: string;
+  /**
    * Provider-specific configuration (e.g., api_key, base_url, routing params)
    * Supports environment variable substitution with $ prefix (e.g., "$API_KEY")
    * Each provider defines its own typed interface (OpenAIModelConfig, OpenRouterModelConfig, etc.)
@@ -23,6 +29,7 @@ export interface ModelDefinition {
 export interface ModelVariant extends ModelDefinition {
   weight: number;
   ensureToolCall: boolean;
+  profile?: string;
 }
 
 export interface ResolvedModelRoute {
@@ -32,6 +39,7 @@ export interface ResolvedModelRoute {
   weight: number;
   strategy: LoadBalancingStrategy;
   ensureToolCall: boolean;
+  profile?: string;
 }
 
 export interface ModelSummary {
@@ -74,23 +82,46 @@ export class ModelRegistry {
     );
   }
 
-  resolve(modelName: string): ModelVariant {
-    const variants = this.groups.get(modelName);
-    if (!variants || variants.length === 0) {
-      throw new Error(`Model "${modelName}" is not configured`);
+  resolve(modelName: string, profile?: string): ModelVariant {
+    let variants = this.groups.get(modelName);
+
+    if (variants && variants.length > 0 && profile) {
+      const filtered = variants.filter((v) => v.profile === profile);
+      if (filtered.length > 0) {
+        variants = filtered;
+      }
     }
+
+    if (!variants || variants.length === 0) {
+      throw new Error(
+        `Model "${modelName}" is not configured${profile ? ` in profile "${profile}"` : ""}`,
+      );
+    }
+
     const strategy = this.resolveStrategy(variants);
+    let selectedVariant: ModelVariant | undefined;
     switch (strategy) {
       case "round_robin":
-        return this.pickRoundRobin(modelName, variants);
+        selectedVariant = this.pickRoundRobin(modelName, variants);
+        break;
       case "random":
-        return variants[Math.floor(Math.random() * variants.length)];
+        selectedVariant = variants[Math.floor(Math.random() * variants.length)];
+        break;
       case "weighted_random":
-        return this.pickWeighted(variants);
+        selectedVariant = this.pickWeighted(variants);
+        break;
       case "first":
       default:
-        return variants[0];
+        selectedVariant = variants[0];
+        break;
     }
+
+    if (!selectedVariant) {
+      throw new Error(
+        `Failed to select variant for model "${modelName}"${profile ? ` in profile "${profile}"` : ""}`,
+      );
+    }
+    return selectedVariant;
   }
 
   list(): ModelSummary[] {
@@ -113,6 +144,7 @@ export class ModelRegistry {
           weight: variant.weight,
           strategy: variant.strategy ?? strategy,
           ensureToolCall: Boolean(variant.ensureToolCall),
+          profile: variant.profile,
         });
       }
     }

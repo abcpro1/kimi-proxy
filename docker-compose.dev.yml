@@ -1,5 +1,6 @@
 services:
   llm-proxy-dev:
+    container_name: llm-proxy-dev
     build: .
     ports:
       - "127.0.0.1:8001:8000"
@@ -28,6 +29,8 @@ services:
           node --inspect=0.0.0.0:9229 --import tsx src/index.ts;
         fi
       '
+    networks:
+      - llm-proxy-dev
     develop:
       watch:
         - action: sync
@@ -50,6 +53,7 @@ services:
           path: model-config.yaml
 
   frontend-dev:
+    container_name: llm-proxy-frontend-dev
     image: node:20-alpine
     working_dir: /app
     ports:
@@ -57,6 +61,7 @@ services:
     environment:
       # Allow pnpm to remove conflicting node_modules without TTY prompts
       - CI=true
+      - VITE_API_URL=http://localhost:8001
     volumes:
       # Mount source code for live reload
       - ./frontend:/app
@@ -64,6 +69,8 @@ services:
       - /app/node_modules
     command: sh -c "corepack enable && pnpm install && pnpm run dev -- --host 0.0.0.0"
     depends_on:
+      - llm-proxy-dev
+    networks:
       - llm-proxy-dev
     develop:
       watch:
@@ -77,3 +84,6 @@ services:
           path: ./frontend/pnpm-lock.yaml
         - action: restart
           path: ./frontend/package.json
+
+networks:
+  llm-proxy-dev:

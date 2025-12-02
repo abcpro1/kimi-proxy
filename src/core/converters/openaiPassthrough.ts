@@ -23,6 +23,7 @@ interface NormalizedToolCall extends JsonObject {
     name: string;
     arguments: string;
   };
+  extra_content?: JsonObject;
 }
 
 interface ResponseMessageOutput extends JsonObject {
@@ -416,6 +417,9 @@ function normalizeToolCallEntry(entry: JsonValue): NormalizedToolCall | null {
       name,
       arguments: args,
     },
+    ...(isJsonObject(entry.extra_content)
+      ? { extra_content: entry.extra_content }
+      : {}),
   };
 }
 
@@ -811,7 +815,7 @@ function convertToolCallOutput(
       : fn.arguments !== undefined
         ? JSON.stringify(fn.arguments)
         : "";
-  return {
+  const output: JsonObject = {
     id: toolId,
     object: "function_call",
     type: "function_call",
@@ -820,6 +824,7 @@ function convertToolCallOutput(
     call_id: callId,
     arguments: resolvedArgs,
   };
+  return output;
 }
 
 function resolveItemStatus(

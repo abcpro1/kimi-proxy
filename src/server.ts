@@ -24,9 +24,11 @@ import {
 import { AnthropicToOpenAIConverter } from "./core/converters/anthropicToOpenAI.js";
 import { DisableStreamingTransform } from "./core/transforms/request/DisableStreamingTransform.js";
 import { EnsureToolCallRequestTransform } from "./core/transforms/request/EnsureToolCallRequestTransform.js";
+import { RestoreThoughtSignaturesTransform } from "./core/transforms/request/RestoreThoughtSignaturesTransform.js";
 import { KimiResponseTransform } from "./core/transforms/response/KimiResponseTransform.js";
 import { EnsureToolCallResponseTransform } from "./core/transforms/response/EnsureToolCallResponseTransform.js";
 import { ValidateToolArgumentsTransform } from "./core/transforms/response/ValidateToolArgumentsTransform.js";
+import { ExtractThoughtSignaturesTransform } from "./core/transforms/response/ExtractThoughtSignaturesTransform.js";
 import {
   ClientFormat,
   ProxyOperation,
@@ -55,6 +57,10 @@ import { CleanupExtraPropertiesResponseTransform } from "./core/transforms/respo
 interface ProxyHandlerOptions {
   operation: ProxyOperation;
   clientFormat: ClientFormat;
+}
+
+interface FastifyParamsWithProfile {
+  profile: string;
 }
 
 interface PipelineContext {
@@ -132,12 +138,14 @@ export async function createServer(
   const requestTransforms: RequestTransform[] = [
     new DisableStreamingTransform(),
     new EnsureToolCallRequestTransform(),
+    new RestoreThoughtSignaturesTransform(),
   ];
   const responseTransforms: ResponseTransform[] = [
     new CleanupExtraPropertiesResponseTransform(),
     new KimiResponseTransform(),
     new EnsureToolCallResponseTransform(),
     new ValidateToolArgumentsTransform(),
+    new ExtractThoughtSignaturesTransform(),
   ];
 
   const pipeline = new LLMProxyPipeline({
@@ -174,6 +182,57 @@ export async function createServer(
       clientFormat: ClientFormat.OpenAIResponses,
     });
   });
+
+  // Profile-based routes with alias support
+  server.post<{ Params: FastifyParamsWithProfile }>(
+    "/:profile/v1/chat/completions",
+    async (req, reply) => {
+      const body = requestBodyAsObject(req);
+      await handleProxyRequest(
+        req,
+        reply,
+        body,
+        pipelineDeps,
+        {
+          operation: ProxyOperation.ChatCompletions,
+          clientFormat: ClientFormat.OpenAIChatCompletions,
+        },
+        req.params.profile,
+      );
+    },
+  );
+
+  server.post<{ Params: FastifyParamsWithProfile }>(
+    "/:profile/v1/messages",
+    async (req, reply) => {
+      const body = requestBodyAsObject(req);
+      await handleAnthropicMessages(
+        req,
+        reply,
+        body,
+        pipelineDeps,
+        req.params.profile,
+      );
+    },
+  );
+
+  server.post<{ Params: FastifyParamsWithProfile }>(
+    "/:profile/v1/responses",
+    async (req, reply) => {
+      const body = requestBodyAsObject(req);
+      await handleProxyRequest(
+        req,
+        reply,
+        body,
+        pipelineDeps,
+        {
+          operation: ProxyOperation.Responses,
+          clientFormat: ClientFormat.OpenAIResponses,
+        },
+        req.params.profile,
+      );
+    },
+  );
 
   server.get("/v1/models", (_req, reply) => {
     const summaries = modelRegistry.list();
@@ -221,6 +280,7 @@ async function handleProxyRequest(
   body: JsonObject,
   deps: PipelineContext,
   options: ProxyHandlerOptions,
+  profile?: string,
 ) {
   const model = body.model;
   if (!model || typeof model !== "string") {
@@ -232,7 +292,12 @@ async function handleProxyRequest(
   let resolvedModel: ModelVariant;
   let providerConfig: JsonObject | undefined;
   try {
-    resolvedModel = deps.modelRegistry.resolve(model);
+    resolvedModel = deps.modelRegistry.resolve(model, profile);
+    if (!resolvedModel) {
+      throw new Error(
+        `Model "${model}" resolved to undefined${profile ? ` in profile "${profile}"` : ""}`,
+      );
+    }
     provider = deps.providerRegistry.get(resolvedModel.provider);
 
     if (resolvedModel.providerConfig) {
@@ -241,7 +306,7 @@ async function handleProxyRequest(
       ) as JsonObject;
     }
   } catch (error) {
-    logger.error({ err: error, model }, "Model resolution failed");
+    logger.error({ err: error, model, profile }, "Model resolution failed");
     deps.logStore.append({
       method: req.method,
       url: req.url,
@@ -329,6 +394,7 @@ async function handleAnthropicMessages(
   reply: FastifyReply,
   body: JsonObject,
   deps: PipelineContext,
+  profile?: string,
 ) {
   const model = body.model;
   if (!model || typeof model !== "string") {
@@ -340,7 +406,12 @@ async function handleAnthropicMessages(
   let resolvedModel: ModelVariant;
   let providerConfig: JsonObject | undefined;
   try {
-    resolvedModel = deps.modelRegistry.resolve(model);
+    resolvedModel = deps.modelRegistry.resolve(model, profile);
+    if (!resolvedModel) {
+      throw new Error(
+        `Model "${model}" resolved to undefined${profile ? ` in profile "${profile}"` : ""}`,
+      );
+    }
     provider = deps.providerRegistry.get(resolvedModel.provider);
 
     if (resolvedModel.providerConfig) {
@@ -349,7 +420,7 @@ async function handleAnthropicMessages(
       ) as JsonObject;
     }
   } catch (error) {
-    logger.error({ err: error, model }, "Model resolution failed");
+    logger.error({ err: error, model, profile }, "Model resolution failed");
     deps.logStore.append({
       method: req.method,
       url: req.url,

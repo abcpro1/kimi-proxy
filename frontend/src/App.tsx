@@ -250,7 +250,9 @@ const Dashboard = () => {
         queryParams.append("search", debouncedSearch);
       }
 
-      const res = await fetch(`/api/logs?${queryParams.toString()}`);
+      const res = await fetch(
+        `${import.meta.env.VITE_API_URL || ""}/api/logs?${queryParams.toString()}`,
+      );
       const data = await res.json();
 
       // Simple identity check to avoid re-renders if data hasn't changed

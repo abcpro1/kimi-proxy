@@ -328,12 +328,13 @@ export function openaiToAnthropicResponse(
       const parsedArgs = JSON.parse(
         toolCall.function?.arguments ?? "{}",
       ) as JsonObject;
-      contentBlocks.push({
+      const contentBlock: AnthropicContentBlock = {
         type: "tool_use",
         id: toolCall.id,
         name: toolCall.function?.name,
         input: parsedArgs,
-      });
+      };
+      contentBlocks.push(contentBlock);
     }
   }
 

@@ -194,6 +194,7 @@ const modelDefinitionSchema = z.object({
   weight: z.number().optional(),
   strategy: loadBalancingStrategySchema.optional(),
   ensure_tool_call: z.boolean().optional(),
+  profile: z.string().optional(),
   provider_config: z.record(z.unknown()).optional(),
 });
 
@@ -230,6 +231,7 @@ function parseModelRegistryConfig(): {
     weight: entry.weight,
     strategy: entry.strategy,
     ensureToolCall: entry.ensure_tool_call,
+    profile: entry.profile,
     providerConfig: entry.provider_config,
   }));
   for (const def of definitions) {

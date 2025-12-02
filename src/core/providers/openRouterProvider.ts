@@ -74,10 +74,10 @@ export class OpenRouterProvider implements LLMProvider {
     }
   }
 
-  private buildUrl(operation: ProxyOperation): URL {
+  private buildUrl(operation: ProxyOperation): string {
     const baseUrl = this.config.baseUrl;
     const path = this.resolvePath(operation);
-    const url = new URL(path, baseUrl);
+    const url = `${baseUrl.replace(/\/+$/, "")}${path}`;
 
     return url;
   }

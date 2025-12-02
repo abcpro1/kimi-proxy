@@ -16,3 +16,17 @@ models:
   - name: qwen3-coder
     provider: vertex
     model: qwen/qwen3-coder-480b-a35b-instruct-maas
+
+  # Profile-based aliases
+  # Models can be assigned to profiles for URL-based routing
+  # Access via: /profile-name/v1/chat/completions
+  # If a model with profile is requested but not found, falls back to global models
+  - name: claude-haiku-4-5-20251001
+    provider: vertex
+    model: minimaxai/minimax-m2-maas
+    profile: kimi-k2
+  - name: claude-sonnet-4-5-20250929
+    provider: vertex
+    model: moonshotai/kimi-k2-thinking-maas
+    ensure_tool_call: true
+    profile: kimi-k2
