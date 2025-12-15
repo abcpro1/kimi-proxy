@@ -1,7 +1,7 @@
 {
   "name": "kimi-proxy",
   "description": "An agent-friendly LLM proxy that cleans up Kimi K2 output, fixes tool calls, and normalizes responses for OpenAI/Anthropic-style clients.",
-  "version": "0.0.2",
+  "version": "0.1.0",
   "license": "MIT",
   "author": "abcpro1",
   "repository": "github:abcpro1/kimi-proxy",
