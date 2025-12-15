@@ -1,32 +1,32 @@
 services:
   llm-proxy-dev:
     container_name: llm-proxy-dev
-    build: .
+    image: oven/bun:1.3.4-alpine
     ports:
       - "127.0.0.1:8001:8000"
-      # Expose Node inspector when running in debug mode
+      # Expose Node/Bun inspector when running in debug mode
       - "127.0.0.1:9229:9229"
     working_dir: /app
     env_file:
       - .env
     environment:
       - PORT=8000
-      # Enable Node inspector by default for dev; skip via DEBUG=0 if desired
+      - HOST=0.0.0.0
+      # Enable inspector by default for dev; skip via DEBUG=0 if desired
       - DEBUG=1
-      # Allow pnpm to remove conflicting node_modules without TTY prompts
-      - CI=true
+      - LOG_LEVEL=debug
     volumes:
-      # Mount source for live reload; keep container node_modules isolated
       - .:/app
-      - /app/node_modules
+      - node_modules:/app/node_modules
     command: >-
       sh -c '
         set -ex;
-        corepack enable && pnpm install;
+        apk add ripgrep
+        bun install;
         if [ "${DEBUG}" = "0" ]; then
-          node --import tsx src/index.ts;
+          bun run --watch src/index.ts;
         else
-          node --inspect=0.0.0.0:9229 --import tsx src/index.ts;
+          bun run --inspect=0.0.0.0:9229/debug --watch src/index.ts;
         fi
       '
     networks:
@@ -43,8 +43,6 @@ services:
             - frontend/node_modules/
             - frontend/dist/
             - .git/
-        - action: restart
-          path: pnpm-lock.yaml
         - action: rebuild
           path: package.json
         - action: restart
@@ -54,20 +52,16 @@ services:
 
   frontend-dev:
     container_name: llm-proxy-frontend-dev
-    image: node:20-alpine
+    image: oven/bun:1.3.4-alpine
     working_dir: /app
     ports:
       - "127.0.0.1:8002:5173"
     environment:
-      # Allow pnpm to remove conflicting node_modules without TTY prompts
-      - CI=true
       - VITE_API_URL=http://localhost:8001
     volumes:
-      # Mount source code for live reload
       - ./frontend:/app
-      # Keep node_modules inside the container to avoid host-shadowing on restart
-      - /app/node_modules
-    command: sh -c "corepack enable && pnpm install && pnpm run dev -- --host 0.0.0.0"
+      - node_modules:/app/node_modules
+    command: sh -c "bun install && bun run dev -- --host 0.0.0.0 --port 5173"
     depends_on:
       - llm-proxy-dev
     networks:
@@ -81,9 +75,10 @@ services:
             - node_modules/
             - dist/
         - action: restart
-          path: ./frontend/pnpm-lock.yaml
-        - action: restart
           path: ./frontend/package.json
 
 networks:
   llm-proxy-dev:
+
+volumes:
+  node_modules:

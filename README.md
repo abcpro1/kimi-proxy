@@ -74,6 +74,10 @@ What clients receive:
 
 Enable with `ensure_tool_call: true` in model config. The proxy detects missing tool calls and re-prompts the model with a reminder.
 
+When enabled, the proxy also injects a termination tool named `done` and a system instruction telling the model to call it when finished (optionally with `{"final_answer":"..."}`), then strips that termination tool call from the final response.
+
+Control the maximum number of re-prompt attempts with `ENSURE_TOOL_CALL_MAX_ATTEMPTS` (default: `3`, max: `5`).
+
 **Example enforcement flow:**
 
 ```
@@ -116,18 +120,20 @@ Distribute traffic across providers using round-robin, weighted random, random, 
 
 - **Extensible architecture** for adding new models and providers
 - **Provider support**: OpenAI-compatible APIs, OpenRouter, Vertex AI
+- **Hybrid logging pipeline**: SQLite metadata with filesystem blobs, LiveStore-backed dashboard with virtualized/lazy blob loading
 
-## Quick Start
+## Quick Start (Bun)
 
 ```bash
-pnpm install
+bun install
 cp .env.example .env
 cp model-config.example.yaml model-config.yaml
 # Edit .env and model-config.yaml with your provider keys and models
-pnpm run dev
+bun run dev            # backend
+bun --cwd frontend dev # dashboard (Vite)
 ```
 
-The API runs on `http://127.0.0.1:8000` and serves the dashboard at `/`.
+The API runs on `http://127.0.0.1:8000` and serves the dashboard (built assets) at `/`. The dev dashboard uses `VITE_API_URL` to point at the backend (defaults to same origin).
 
 ## Configuration
 
@@ -136,8 +142,10 @@ The API runs on `http://127.0.0.1:8000` and serves the dashboard at `/`.
 Set environment variables in `.env`:
 
 - **Generic OpenAI**: `OPENAI_BASE_URL`, `OPENAI_API_KEY`
+- **Anthropic**: `ANTHROPIC_API_KEY`, optional `ANTHROPIC_BASE_URL`
 - **OpenRouter**: `OPENROUTER_API_KEY`, `OPENROUTER_PROVIDERS` (optional), `OPENROUTER_ORDER` (optional)
 - **Vertex AI**: `VERTEX_PROJECT_ID`, `VERTEX_LOCATION`, `GOOGLE_APPLICATION_CREDENTIALS`
+  - `GOOGLE_APPLICATION_CREDENTIALS` can be a path to the JSON key file or the JSON payload itself. Use `VERTEX_CHAT_ENDPOINT` to point at a private MaaS endpoint if needed.
 
 ### Models
 
@@ -159,14 +167,15 @@ models:
 
 ## Dashboard
 
-The web dashboard shows request/response logs and metrics. Access it at the root path when running the proxy.
+The web dashboard shows request/response logs and metrics. Access it at the root path when running the proxy. LiveStore metadata sync pulls from `/api/livestore/pull` in batches (size controlled by `LIVESTORE_BATCH`) and lazily fetches blobs on expansion. Build the dashboard with `bun run build:all` to serve static assets from the backend.
 
 ## Development
 
 ```bash
-pnpm run dev      # Run with hot reload
-pnpm run test     # Run unit tests
-pnpm run build    # TypeScript build
+bun run dev         # Run backend with hot reload
+bun --cwd frontend dev  # Run dashboard
+bun test            # Run tests
+bun run build:all   # Build server + dashboard
 ```
 
 ## Docker

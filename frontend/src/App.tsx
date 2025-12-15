@@ -1,466 +1,850 @@
 import React, {
-  useState,
-  useEffect,
   Suspense,
   useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
   useRef,
+  useState,
 } from "react";
-import { useUIStore } from "./store/uiStore";
+import {
+  ColumnDef,
+  getCoreRowModel,
+  useReactTable,
+} from "@tanstack/react-table";
+import { useVirtualizer } from "@tanstack/react-virtual";
+import { useThemeStore } from "./store/themeStore";
+import SearchFilters from "./components/SearchFilters";
+import {
+  createLogsStore,
+  tables,
+  type LogsStore,
+  type LogDocType,
+} from "./data/db";
+import { syncLogs } from "./data/sync";
+import { fetchBlob } from "./data/blobs";
+import { searchLogBlobs } from "./data/search";
+import "./index.css";
+import { RefreshCw, Pause, Sun, Moon, SunMoon } from "lucide-react";
 
-// Lazy load the heavy JSON viewer component
 const JSONViewer = React.lazy(() => import("./components/JSONViewer"));
 
-interface RequestLog {
-  id: number;
-  timestamp: string;
-  method: string;
-  url: string;
-  status_code: number;
-  model?: string;
-  request_body: any;
-  response_body: any;
-  provider_request_body?: any;
-  provider_response_body?: any;
+type BlobKind =
+  | "request"
+  | "response"
+  | "provider-request"
+  | "provider-response";
+
+function parseJson(value?: string) {
+  if (!value) return null;
+  try {
+    return JSON.parse(value);
+  } catch {
+    return value;
+  }
 }
 
-interface StatusBadgeProps {
-  status: number;
+function extractBlobSearchQuery(query: string) {
+  const tokens = query.match(/(?:[^\s"]+|"[^"]*")+/g) || [];
+  const parts: string[] = [];
+
+  for (const token of tokens) {
+    const cleanToken = token.replace(/^"(.*)"$/, "$1").trim();
+    if (!cleanToken) continue;
+    if (/^(and|or|not)$/i.test(cleanToken)) continue;
+    if (/^\w+:.+/.test(cleanToken)) continue;
+    parts.push(token);
+  }
+
+  return parts.join(" ");
 }
 
-const StatusBadge = React.memo(({ status }: StatusBadgeProps) => {
+function StatusBadge({ status }: { status: number }) {
   const isSuccess = status >= 200 && status < 300;
+  const isWarning = status >= 300 && status < 400;
+  const isError = status >= 400;
+
   return (
-    <span className={`badge ${isSuccess ? "badge-success" : "badge-error"}`}>
+    <span
+      className={`badge ${
+        isSuccess
+          ? "badge-success"
+          : isWarning
+            ? "badge-warning"
+            : "badge-error"
+      }`}
+      title={`HTTP ${status}`}
+    >
       {status}
     </span>
   );
-});
-
-interface Tab {
-  label: string;
-  content: React.ReactNode;
 }
 
-interface TabbedPaneProps {
-  tabs: Tab[];
-  storageKey: string;
+function MethodPill({ method }: { method: string }) {
+  return <span className="method-pill">{method}</span>;
 }
 
-const TabbedPane = ({ tabs, storageKey }: TabbedPaneProps) => {
-  const activeTab = useUIStore(
-    useCallback((state) => state.tabStates[storageKey] || 0, [storageKey]),
-  );
-  const setTabState = useUIStore(useCallback((state) => state.setTabState, []));
+const LogRow = React.memo(
+  function LogRow({
+    log,
+    expanded,
+    activeTab,
+    onToggle,
+    onTabChange,
+    blobBody,
+    ensureBlob,
+    loadingBlob,
+  }: {
+    log: LogDocType;
+    expanded: boolean;
+    activeTab: BlobKind;
+    onToggle: (id: string) => void;
+    onTabChange: (id: string, tab: BlobKind) => void;
+    blobBody: string | undefined;
+    ensureBlob: (logId: string, kind: BlobKind) => Promise<void>;
+    loadingBlob: boolean;
+  }) {
+    const summary = log.summary ? parseJson(log.summary) : null;
+    const preview =
+      summary && typeof summary === "object" && "preview" in summary
+        ? (summary as { preview?: string }).preview
+        : undefined;
+    const finish =
+      summary && typeof summary === "object" && "finish_reason" in summary
+        ? (summary as { finish_reason?: string }).finish_reason
+        : undefined;
 
-  return (
-    <div className="tabbed-pane">
-      <div className="tabs-header">
-        {tabs.map((tab, index) => (
-          <button
-            key={index}
-            className={`tab-btn ${activeTab === index ? "active" : ""}`}
-            onClick={(e) => {
-              e.stopPropagation();
-              setTabState(storageKey, index);
-            }}
-          >
-            {tab.label}
-          </button>
-        ))}
-      </div>
-      <div className="tab-content">{tabs[activeTab].content}</div>
-    </div>
-  );
-};
+    const tabs: { id: BlobKind; label: string }[] = [
+      { id: "request", label: "Request" },
+      { id: "response", label: "Response" },
+      { id: "provider-request", label: "Provider Request" },
+      { id: "provider-response", label: "Provider Response" },
+    ];
 
-interface LogRowProps {
-  log: RequestLog;
-  expanded: boolean;
-  onToggle: (id: number) => void;
-}
+    useEffect(() => {
+      if (expanded) {
+        void ensureBlob(log.id, activeTab);
+      }
+    }, [expanded, activeTab, log.id]);
 
-const LogRow = React.memo(({ log, expanded, onToggle }: LogRowProps) => {
-  return (
-    <React.Fragment>
-      <tr className="log-row" onClick={() => onToggle(log.id)}>
-        <td>{log.id}</td>
-        <td>{new Date(log.timestamp).toLocaleString()}</td>
-        <td>
-          <span className="method-badge">{log.method}</span>
-        </td>
-        <td>{log.url}</td>
-        <td>{log.model || "-"}</td>
-        <td>
-          <StatusBadge status={log.status_code} />
-        </td>
-        <td>
-          <i className={`fas fa-chevron-${expanded ? "up" : "down"}`}></i>
-        </td>
-      </tr>
-      <tr className="detail-row">
-        <td colSpan={7}>
-          <div className={`expand-wrapper ${expanded ? "open" : ""}`}>
-            <div className="expand-inner">
-              <div className="detail-content">
-                {expanded && (
-                  <Suspense
-                    fallback={
-                      <div style={{ padding: "1rem", textAlign: "center" }}>
-                        Loading viewer...
-                      </div>
-                    }
-                  >
-                    <div
-                      className="detail-grid"
-                      style={{
-                        gridTemplateColumns:
-                          "repeat(auto-fit, minmax(500px, 1fr))",
-                      }}
-                    >
-                      {/* Request Column */}
-                      <div className="detail-col" style={{ minWidth: 0 }}>
-                        <TabbedPane
-                          storageKey={`log-${log.id}-request`}
-                          tabs={[
-                            {
-                              label: "Original Request",
-                              content: <JSONViewer data={log.request_body} />,
-                            },
-                            {
-                              label: "Provider Request",
-                              content: log.provider_request_body ? (
-                                <JSONViewer data={log.provider_request_body} />
-                              ) : (
-                                <div
-                                  style={{
-                                    padding: "2rem",
-                                    textAlign: "center",
-                                    color: "var(--text-color)",
-                                    opacity: 0.5,
-                                  }}
-                                >
-                                  <i
-                                    className="fas fa-ban"
-                                    style={{
-                                      marginBottom: "0.5rem",
-                                      display: "block",
-                                      fontSize: "1.5rem",
-                                    }}
-                                  ></i>
-                                  Not available
-                                </div>
-                              ),
-                            },
-                          ]}
-                        />
-                      </div>
+    return (
+      <div className={`log-card ${expanded ? "expanded" : ""}`}>
+        <div className="log-card-header" onClick={() => onToggle(log.id)}>
+          <div className="log-card-meta">
+            <MethodPill method={log.method} />
+            <span className="log-url">{log.url}</span>
+            <StatusBadge status={log.status_code} />
+          </div>
+          <div className="log-card-details">
+            <span>{new Date(log.timestamp).toLocaleString()}</span>
+            <span className="muted">Model: {log.model ?? "-"}</span>
+            <span className="muted">Provider: {log.provider ?? "-"}</span>
+            {finish && <span className="muted">Finish: {finish}</span>}
+          </div>
+          {preview && <div className="log-preview">{preview}</div>}
+        </div>
 
-                      {/* Response Column */}
-                      <div className="detail-col" style={{ minWidth: 0 }}>
-                        <TabbedPane
-                          storageKey={`log-${log.id}-response`}
-                          tabs={[
-                            {
-                              label: "Provider Response",
-                              content: log.provider_response_body ? (
-                                <JSONViewer data={log.provider_response_body} />
-                              ) : (
-                                <div
-                                  style={{
-                                    padding: "2rem",
-                                    textAlign: "center",
-                                    color: "var(--text-color)",
-                                    opacity: 0.5,
-                                  }}
-                                >
-                                  <i
-                                    className="fas fa-ban"
-                                    style={{
-                                      marginBottom: "0.5rem",
-                                      display: "block",
-                                      fontSize: "1.5rem",
-                                    }}
-                                  ></i>
-                                  Not available
-                                </div>
-                              ),
-                            },
-                            {
-                              label: "Client Response",
-                              content: <JSONViewer data={log.response_body} />,
-                            },
-                          ]}
-                        />
-                      </div>
-                    </div>
-                  </Suspense>
-                )}
-              </div>
+        {expanded && (
+          <div className="log-card-body">
+            <div className="tabs">
+              {tabs.map((tab) => (
+                <button
+                  key={tab.id}
+                  className={`tab-btn ${activeTab === tab.id ? "active" : ""}`}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onTabChange(log.id, tab.id);
+                    void ensureBlob(log.id, tab.id);
+                  }}
+                >
+                  {tab.label}
+                </button>
+              ))}
+            </div>
+            <div className="tab-content">
+              <Suspense
+                fallback={<div className="skeleton">Loading viewer…</div>}
+              >
+                {loadingBlob && <div className="skeleton">Fetching blob…</div>}
+                {!loadingBlob && <JSONViewer data={parseJson(blobBody)} />}
+              </Suspense>
             </div>
           </div>
-        </td>
-      </tr>
-    </React.Fragment>
+        )}
+      </div>
+    );
+  },
+  (prev, next) => {
+    return (
+      prev.expanded === next.expanded &&
+      prev.activeTab === next.activeTab &&
+      prev.blobBody === next.blobBody &&
+      prev.loadingBlob === next.loadingBlob &&
+      prev.log.id === next.log.id &&
+      prev.log.timestamp === next.log.timestamp &&
+      prev.log.status_code === next.log.status_code &&
+      prev.log.method === next.log.method &&
+      prev.log.url === next.log.url
+    );
+  },
+);
+
+function ThemeToggle() {
+  const { theme, setTheme, resolvedTheme } = useThemeStore();
+
+  const cycleTheme = () => {
+    if (theme === "light") setTheme("dark");
+    else if (theme === "dark") setTheme("system");
+    else setTheme("light");
+  };
+
+  const getIcon = () => {
+    if (theme === "system") return <SunMoon size={16} />;
+    if (resolvedTheme === "dark") return <Moon size={16} />;
+    return <Sun size={16} />;
+  };
+
+  return (
+    <button
+      className="btn theme-toggle"
+      onClick={cycleTheme}
+      title={`Current: ${theme} (${resolvedTheme})\nClick to cycle theme`}
+    >
+      <span className="theme-icon">{getIcon()}</span>
+      <span className="theme-text">{theme}</span>
+    </button>
   );
-});
+}
 
-const Dashboard = () => {
-  const [logs, setLogs] = useState<RequestLog[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [autoRefresh, setAutoRefresh] = useState(false);
-  const { expandedLogId, setExpandedLogId } = useUIStore();
-  const [theme, setTheme] = useState<string | null>(null);
-
-  // Pagination & Search State
-  const [page, setPage] = useState(1);
-  const [total, setTotal] = useState(0);
+export default function App() {
+  const [store, setStore] = useState<LogsStore | null>(null);
+  const [logs, setLogs] = useState<LogDocType[]>([]);
+  const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [tabState, setTabState] = useState<Record<string, BlobKind>>({});
+  const [blobBodies, setBlobBodies] = useState<Record<string, string>>({});
+  const [loadingBlobs, setLoadingBlobs] = useState<Record<string, boolean>>({});
   const [search, setSearch] = useState("");
   const [debouncedSearch, setDebouncedSearch] = useState("");
+  const [autoRefresh, setAutoRefresh] = useState(true);
+  const [selectedModel, setSelectedModel] = useState("");
+  const [selectedProvider, setSelectedProvider] = useState("");
+  const [selectedStatus, setSelectedStatus] = useState("");
+  const [blobSearch, setBlobSearch] = useState<{
+    query: string;
+    ids: string[];
+    truncated: boolean;
+    engine: "rg";
+  } | null>(null);
+  const [blobSearchLoading, setBlobSearchLoading] = useState(false);
+  const [blobSearchError, setBlobSearchError] = useState<string | null>(null);
+  const syncingRef = useRef(false);
+  const blobSearchSeqRef = useRef(0);
+  const searchInputRef = useRef<HTMLInputElement>(null);
 
-  const pageSize = 20;
+  const { theme, initTheme } = useThemeStore();
 
-  // Keep ref of current logs for comparison in fetchLogs
-  const logsRef = useRef(logs);
-
-  // Debounce search input
+  // Initialize theme on mount
   useEffect(() => {
-    const timer = setTimeout(() => {
+    initTheme();
+  }, [initTheme]);
+
+  // Debounce search
+  useEffect(() => {
+    const handler = setTimeout(() => {
       setDebouncedSearch(search);
-      setPage(1); // Reset to page 1 on search change
-    }, 500);
-    return () => clearTimeout(timer);
+    }, 300);
+    return () => clearTimeout(handler);
   }, [search]);
 
-  // Keep logsRef updated
+  // Listen for system theme changes
   useEffect(() => {
-    logsRef.current = logs;
-  }, [logs]);
-
-  const fetchLogs = useCallback(async () => {
-    // Only set loading if not auto-refreshing to avoid UI flicker
-    if (!autoRefresh) setLoading(true);
-
-    try {
-      const queryParams = new URLSearchParams({
-        page: page.toString(),
-        page_size: pageSize.toString(),
-      });
-
-      if (debouncedSearch) {
-        queryParams.append("search", debouncedSearch);
+    const mediaQuery = window.matchMedia("(prefers-color-scheme: dark)");
+    const handleThemeChange = () => {
+      if (theme === "system") {
+        initTheme();
       }
+    };
 
-      const res = await fetch(
-        `${import.meta.env.VITE_API_URL || ""}/api/logs?${queryParams.toString()}`,
-      );
-      const data = await res.json();
+    mediaQuery.addEventListener("change", handleThemeChange);
+    return () => mediaQuery.removeEventListener("change", handleThemeChange);
+  }, [theme, initTheme]);
 
-      // Simple identity check to avoid re-renders if data hasn't changed
-      const prevLogs = logsRef.current;
-      logsRef.current = data.items;
+  // Enhanced search with field parsing
+  const parseSearchQuery = useCallback((query: string) => {
+    const terms: { [key: string]: string } = {};
+    const textParts: string[] = [];
 
-      if (prevLogs !== data.items) {
-        setLogs(data.items);
+    // Split by spaces but respect quoted strings
+    const tokens = query.match(/(?:[^\s"]+|"[^"]*")+/g) || [];
+
+    for (const token of tokens) {
+      // Remove quotes from quoted strings
+      const cleanToken = token.replace(/^"(.*)"$/, "$1");
+      if (/^(and|or|not)$/i.test(cleanToken)) continue;
+
+      // Check for field-specific searches (field:value)
+      const fieldMatch = cleanToken.match(/^(\w+):(.+)$/);
+      if (fieldMatch) {
+        const [, field, value] = fieldMatch;
+        terms[field] = value;
+      } else {
+        textParts.push(cleanToken);
       }
-      setTotal(data.total);
-    } catch (err) {
-      console.error("Failed to fetch logs", err);
-    } finally {
-      setLoading(false);
     }
-  }, [autoRefresh, page, pageSize, debouncedSearch]);
 
-  // Initial load & updates
+    return { terms, text: textParts.join(" "), textParts };
+  }, []);
+
+  // Keyboard shortcuts
   useEffect(() => {
-    fetchLogs();
-  }, [page, debouncedSearch]);
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // Focus search with Ctrl+K or Cmd+K
+      if ((e.ctrlKey || e.metaKey) && e.key === "k") {
+        e.preventDefault();
+        searchInputRef.current?.focus();
+        return;
+      }
 
-  // Auto refresh interval
+      // Clear search with Escape
+      if (
+        e.key === "Escape" &&
+        document.activeElement === searchInputRef.current
+      ) {
+        if (search) {
+          e.preventDefault();
+          setSearch("");
+        } else {
+          searchInputRef.current?.blur();
+        }
+        return;
+      }
+
+      // Toggle theme with Ctrl+Shift+T
+      if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key === "T") {
+        e.preventDefault();
+        const { setTheme, theme } = useThemeStore.getState();
+        const newTheme =
+          theme === "light" ? "dark" : theme === "dark" ? "system" : "light";
+        setTheme(newTheme);
+        return;
+      }
+
+      // Toggle auto refresh with Ctrl+R
+      if ((e.ctrlKey || e.metaKey) && e.key === "r") {
+        e.preventDefault();
+        setAutoRefresh((prev) => !prev);
+        return;
+      }
+    };
+
+    document.addEventListener("keydown", handleKeyDown);
+    return () => document.removeEventListener("keydown", handleKeyDown);
+  }, [search]);
+
+  const syncNow = useCallback(async () => {
+    if (!store || syncingRef.current) return;
+    syncingRef.current = true;
+    try {
+      await syncLogs(store, { batchSize: 200 });
+    } finally {
+      syncingRef.current = false;
+    }
+  }, [store]);
+
   useEffect(() => {
-    if (!autoRefresh) return;
-    const id = setInterval(fetchLogs, 2000);
-    return () => clearInterval(id);
-  }, [fetchLogs]);
+    let cancelled = false;
 
-  // Cleanup tabStates for logs not in current page (prevents memory leak)
+    createLogsStore().then((created) => {
+      if (cancelled) return;
+      setStore(created);
+
+      if (syncingRef.current) return;
+      syncingRef.current = true;
+      void syncLogs(created, { batchSize: 200 })
+        .catch((error) => {
+          console.warn("Initial LiveStore sync failed; will retry", error);
+        })
+        .finally(() => {
+          syncingRef.current = false;
+        });
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   useEffect(() => {
-    // Get IDs of logs currently in the page
-    const currentLogIds = new Set(logs.map((log) => log.id));
-
-    // Get current tab states
-    const tabStates = useUIStore.getState().tabStates;
-
-    // Find tab state keys that don't belong to current page logs
-    const keysToRemove: string[] = [];
-    for (const key of Object.keys(tabStates)) {
-      // Extract log ID from keys like "log-123-request" or "log-123-response"
-      const match = key.match(/^log-(\d+)-(request|response)$/);
-      if (match) {
-        const logId = parseInt(match[1], 10);
-        if (!currentLogIds.has(logId)) {
-          keysToRemove.push(key);
+    if (!store) return;
+    const runQuery = () => {
+      // Snapshot scroll position relative to the expanded item
+      if (parentRef.current) {
+        const expandedEl =
+          parentRef.current.querySelector(".log-card.expanded");
+        if (expandedEl) {
+          const logId = expandedEl
+            .closest("[data-log-id]")
+            ?.getAttribute("data-log-id");
+          if (logId) {
+            const rect = expandedEl.getBoundingClientRect();
+            const parentRect = parentRef.current.getBoundingClientRect();
+            scrollSnapshotRef.current = {
+              id: logId,
+              offset: rect.top - parentRect.top,
+            };
+          }
         }
       }
+
+      const res = store.query(
+        tables.logs.orderBy([
+          { col: "timestamp", direction: "desc" },
+          { col: "numeric_id", direction: "desc" },
+        ]),
+      );
+      setLogs([...(res as LogDocType[])]);
+    };
+    runQuery();
+    const timer = setInterval(runQuery, 1000);
+    return () => clearInterval(timer);
+  }, [store]);
+
+  useEffect(() => {
+    if (!store) return;
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    let consecutiveFailures = 0;
+    const baseDelayMs = 2500;
+    const maxDelayMs = 30000;
+
+    const nextDelayMs = () =>
+      Math.min(maxDelayMs, baseDelayMs * 2 ** consecutiveFailures);
+
+    const tick = async () => {
+      if (cancelled) return;
+      try {
+        await syncNow();
+        consecutiveFailures = 0;
+      } catch (error) {
+        consecutiveFailures = Math.min(10, consecutiveFailures + 1);
+        console.warn("LiveStore sync failed; retrying", error);
+      } finally {
+        if (!cancelled && autoRefresh) {
+          timer = setTimeout(tick, nextDelayMs());
+        }
+      }
+    };
+
+    if (autoRefresh) {
+      void tick();
     }
 
-    // Remove stale tab states
-    if (keysToRemove.length > 0) {
-      useUIStore.setState((state) => {
-        const newTabStates = { ...state.tabStates };
-        keysToRemove.forEach((key) => {
-          delete newTabStates[key];
+    return () => {
+      cancelled = true;
+      if (timer) clearTimeout(timer);
+    };
+  }, [store, autoRefresh, syncNow]);
+
+  const blobQuery = useMemo(
+    () => extractBlobSearchQuery(debouncedSearch),
+    [debouncedSearch],
+  );
+
+  useEffect(() => {
+    const seq = blobSearchSeqRef.current + 1;
+    blobSearchSeqRef.current = seq;
+
+    if (!blobQuery) {
+      setBlobSearch(null);
+      setBlobSearchLoading(false);
+      setBlobSearchError(null);
+      return;
+    }
+
+    setBlobSearch(null);
+    setBlobSearchError(null);
+
+    const controller = new AbortController();
+    const debounce = setTimeout(() => {
+      setBlobSearchLoading(true);
+      void searchLogBlobs(blobQuery, { signal: controller.signal, limit: 200 })
+        .then((res) => {
+          if (blobSearchSeqRef.current !== seq) return;
+          setBlobSearch({
+            query: blobQuery,
+            ids: res.ids.map(String),
+            truncated: res.truncated,
+            engine: res.engine,
+          });
+        })
+        .catch((error) => {
+          if (blobSearchSeqRef.current !== seq) return;
+          if (controller.signal.aborted) return;
+          setBlobSearchError(
+            error instanceof Error ? error.message : String(error),
+          );
+          setBlobSearch({
+            query: blobQuery,
+            ids: [],
+            truncated: false,
+            engine: "rg",
+          });
+        })
+        .finally(() => {
+          if (blobSearchSeqRef.current === seq) setBlobSearchLoading(false);
         });
-        return { ...state, tabStates: newTabStates };
+    }, 250);
+
+    return () => {
+      controller.abort();
+      clearTimeout(debounce);
+    };
+  }, [blobQuery]);
+
+  const ensureBlob = async (logId: string, kind: BlobKind) => {
+    if (!store) return;
+    const key = `${logId}-${kind}`;
+    if (blobBodies[key]) return;
+    const existing = store.query<Array<{ body: string | null }>>({
+      query: "SELECT body FROM blobs WHERE key = $key LIMIT 1",
+      bindValues: { key },
+    })[0];
+    if (existing?.body) {
+      setBlobBodies((prev) => ({ ...prev, [key]: existing.body ?? "" }));
+      return;
+    }
+    setLoadingBlobs((prev) => ({ ...prev, [key]: true }));
+    try {
+      const blob = await fetchBlob(store, logId, kind);
+      setBlobBodies((prev) => ({ ...prev, [key]: blob }));
+    } finally {
+      setLoadingBlobs((prev) => ({ ...prev, [key]: false }));
+    }
+  };
+
+  // Get unique values for filters
+  const availableModels = useMemo(() => {
+    const models = new Set(logs.map((log) => log.model).filter(Boolean));
+    return Array.from(models) as string[];
+  }, [logs]);
+
+  const availableProviders = useMemo(() => {
+    const providers = new Set(logs.map((log) => log.provider).filter(Boolean));
+    return Array.from(providers) as string[];
+  }, [logs]);
+
+  // Enhanced filtering with search query parsing
+  const filteredLogs = useMemo(() => {
+    let filtered = logs;
+    const { terms, textParts } = parseSearchQuery(debouncedSearch);
+    const blobIdSet =
+      blobQuery && blobSearch?.query === blobQuery
+        ? new Set(blobSearch.ids)
+        : null;
+
+    // Text search - now searches in blob content too (for FTS simulation)
+    if (textParts.length) {
+      const searchTerms = textParts.map((part) => part.toLowerCase());
+      filtered = filtered.filter((log) => {
+        const blobMatch = blobIdSet ? blobIdSet.has(log.id) : false;
+        const metaMatch = searchTerms.some((term) =>
+          [
+            log.request_id,
+            log.url,
+            log.method,
+            log.model ?? "",
+            log.provider ?? "",
+            log.summary ?? "",
+          ]
+            .filter(Boolean)
+            .some((value) => String(value).toLowerCase().includes(term)),
+        );
+        return metaMatch || blobMatch;
       });
     }
 
-    // Also cleanup expandedLogId if it's not for a log in current page
-    const expandedLogId = useUIStore.getState().expandedLogId;
-    if (expandedLogId !== null && !currentLogIds.has(expandedLogId)) {
-      useUIStore.setState({ expandedLogId: null });
-    }
-  }, [page, logs]); // Re-run when page or logs change
-
-  // Theme toggle
-  useEffect(() => {
-    if (theme) {
-      document.documentElement.setAttribute("data-theme", theme);
-    } else {
-      document.documentElement.removeAttribute("data-theme");
-    }
-  }, [theme]);
-
-  const toggleTheme = () => {
-    setTheme((prev: string | null) => {
-      if (prev) {
-        return prev === "light" ? "dark" : "light";
+    // Field-specific searches
+    if (terms.status) {
+      const statusRange = terms.status.match(/^(\d{3})$/);
+      if (statusRange) {
+        const statusCode = parseInt(statusRange[1]);
+        filtered = filtered.filter((log) => log.status_code === statusCode);
+      } else if (terms.status.includes("2")) {
+        filtered = filtered.filter(
+          (log) => log.status_code >= 200 && log.status_code < 300,
+        );
+      } else if (terms.status.includes("4") || terms.status.includes("5")) {
+        filtered = filtered.filter((log) => log.status_code >= 400);
       }
-      // If system, toggle to opposite of system
-      const isSystemDark = window.matchMedia
-        ? window.matchMedia("(prefers-color-scheme: dark)").matches
-        : false;
-      return isSystemDark ? "light" : "dark";
+    }
+
+    if (terms.method) {
+      filtered = filtered.filter(
+        (log) => log.method.toLowerCase() === terms.method.toLowerCase(),
+      );
+    }
+
+    if (terms.model) {
+      filtered = filtered.filter((log) =>
+        log.model?.toLowerCase().includes(terms.model.toLowerCase()),
+      );
+    }
+
+    if (terms.provider) {
+      filtered = filtered.filter((log) =>
+        log.provider?.toLowerCase().includes(terms.provider.toLowerCase()),
+      );
+    }
+
+    // Date/time filtering
+    if (terms.timestamp) {
+      const dateMatch = terms.timestamp.match(/^([><])(\d{4}-\d{2}-\d{2})$/);
+      if (dateMatch) {
+        const [, operator, dateStr] = dateMatch;
+        const targetDate = new Date(dateStr);
+        filtered = filtered.filter((log) => {
+          const logDate = new Date(log.timestamp);
+          if (operator === ">") {
+            return logDate > targetDate;
+          } else if (operator === "<") {
+            return logDate < targetDate;
+          }
+          return true;
+        });
+      }
+    }
+
+    // Dropdown filters
+    if (selectedModel) {
+      filtered = filtered.filter((log) => log.model === selectedModel);
+    }
+
+    if (selectedProvider) {
+      filtered = filtered.filter((log) => log.provider === selectedProvider);
+    }
+
+    if (selectedStatus === "success") {
+      filtered = filtered.filter(
+        (log) => log.status_code >= 200 && log.status_code < 300,
+      );
+    } else if (selectedStatus === "error") {
+      filtered = filtered.filter((log) => log.status_code >= 400);
+    }
+
+    return filtered;
+  }, [
+    logs,
+    debouncedSearch,
+    selectedModel,
+    selectedProvider,
+    selectedStatus,
+    blobQuery,
+    blobSearch,
+    parseSearchQuery,
+  ]);
+
+  const columns = useMemo<ColumnDef<LogDocType>[]>(
+    () => [
+      {
+        header: "ID",
+        accessorKey: "numeric_id",
+        cell: (info) => info.getValue() as number,
+      },
+      {
+        header: "When",
+        accessorKey: "timestamp",
+        cell: (info) => new Date(String(info.getValue())).toLocaleString(),
+      },
+      {
+        header: "URL",
+        accessorKey: "url",
+      },
+      {
+        header: "Model",
+        accessorKey: "model",
+      },
+      {
+        header: "Status",
+        accessorKey: "status_code",
+      },
+    ],
+    [],
+  );
+
+  const table = useReactTable({
+    data: filteredLogs,
+    columns,
+    getCoreRowModel: getCoreRowModel(),
+  });
+
+  const rows = table.getRowModel().rows;
+  const parentRef = useRef<HTMLDivElement | null>(null);
+  const scrollSnapshotRef = useRef<{ id: string; offset: number } | null>(null);
+  const virtualizer = useVirtualizer({
+    count: rows.length,
+    getScrollElement: () => parentRef.current,
+    estimateSize: (index) =>
+      rows[index]?.original.id === expandedId ? 520 : 120,
+    overscan: 10,
+    getItemKey: (index) => rows[index]?.original.id,
+  });
+
+  const virtualItems = virtualizer.getVirtualItems();
+
+  useLayoutEffect(() => {
+    if (!scrollSnapshotRef.current || !parentRef.current) return;
+
+    const { id, offset } = scrollSnapshotRef.current;
+    scrollSnapshotRef.current = null;
+
+    const index = rows.findIndex((r) => r.original.id === id);
+    if (index !== -1) {
+      // Restore scroll position relative to the item
+      const itemOffset = virtualizer.getOffsetForIndex(index);
+      parentRef.current.scrollTop =
+        ((itemOffset || 0) as number) - (offset as number);
+    }
+  }, [rows, virtualizer]);
+
+  const manualRefresh = () => {
+    void syncNow().catch((error) => {
+      console.warn("Manual LiveStore sync failed", error);
     });
   };
 
-  // Memoize toggleExpand to prevent unnecessary re-renders of rows
-  const toggleExpand = useCallback(
-    (id: number) => {
-      setExpandedLogId(expandedLogId === id ? null : id);
-    },
-    [expandedLogId, setExpandedLogId],
-  );
+  // Get search stats
+  const getSearchStats = useMemo(() => {
+    if (!search) return null;
+    const { terms, textParts } = parseSearchQuery(search);
+    const hasFieldSearch = Object.keys(terms).length > 0;
+    const hasTextSearch = textParts.length > 0;
 
-  const totalPages = Math.ceil(total / pageSize);
+    return {
+      total: logs.length,
+      filtered: filteredLogs.length,
+      hasFieldSearch,
+      hasTextSearch,
+      query: search,
+      blobQuery,
+    };
+  }, [search, logs.length, filteredLogs.length, blobQuery, parseSearchQuery]);
+
+  const searchStats = getSearchStats;
 
   return (
-    <div>
+    <div className="app">
       <nav className="navbar">
-        <div className="logo">
-          <i className="fas fa-brain" style={{ marginRight: "10px" }}></i>
-          LLM API Logs
-        </div>
-        <div style={{ flexGrow: 1 }}></div>
-        <input
-          type="search"
-          className="search-box"
-          placeholder="Search logs..."
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-        />
-        <div className="controls" style={{ marginBottom: 0 }}>
-          <button className="btn" onClick={() => setAutoRefresh(!autoRefresh)}>
+        <div className="logo">LLM Logs</div>
+        <div className="controls">
+          <ThemeToggle />
+          <SearchFilters
+            ref={searchInputRef}
+            search={search}
+            onSearchChange={setSearch}
+            selectedModel={selectedModel}
+            onModelChange={setSelectedModel}
+            selectedProvider={selectedProvider}
+            onProviderChange={setSelectedProvider}
+            selectedStatus={selectedStatus}
+            onStatusChange={setSelectedStatus}
+            models={availableModels}
+            providers={availableProviders}
+          />
+          <button
+            className={`btn ${autoRefresh ? "btn-primary" : ""}`}
+            onClick={() => setAutoRefresh((v) => !v)}
+            title={`${autoRefresh ? "Disable" : "Enable"} auto refresh (Ctrl+R)`}
+          >
             {autoRefresh ? (
-              <span>
-                <i className="fas fa-sync spin"></i> Auto-Refresh On
-              </span>
+              <>
+                <RefreshCw size={14} className="icon-spin" /> Auto Refresh: On
+              </>
             ) : (
-              <span>
-                <i className="fas fa-sync"></i> Auto-Refresh Off
-              </span>
+              <>
+                <Pause size={14} /> Auto Refresh: Off
+              </>
             )}
           </button>
-          <button className="btn" onClick={fetchLogs}>
-            <i className={`fas fa-redo ${loading ? "spin" : ""}`}></i> Refresh
-          </button>
-          <button className="btn" onClick={toggleTheme}>
-            <i className="fas fa-moon theme-icon-moon"></i>
-            <i className="fas fa-sun theme-icon-sun"></i>
+          <button
+            className="btn"
+            onClick={manualRefresh}
+            title="Manual refresh"
+          >
+            <RefreshCw size={14} /> Refresh now
           </button>
         </div>
       </nav>
 
-      <div className="container">
-        <div className="card">
-          <div className="table-container">
-            <table>
-              <thead>
-                <tr>
-                  <th>ID</th>
-                  <th>Timestamp</th>
-                  <th>Method</th>
-                  <th>URL</th>
-                  <th>Model</th>
-                  <th>Status</th>
-                  <th></th>
-                </tr>
-              </thead>
-              <tbody>
-                {logs.map((log: RequestLog) => (
-                  <LogRow
-                    key={log.id}
-                    log={log}
-                    expanded={expandedLogId === log.id}
-                    onToggle={toggleExpand}
-                  />
-                ))}
-                {logs.length === 0 && !loading && (
-                  <tr>
-                    <td
-                      colSpan={7}
-                      style={{ textAlign: "center", padding: "2rem" }}
-                    >
-                      No logs found.
-                    </td>
-                  </tr>
-                )}
-                {loading && logs.length === 0 && (
-                  <tr>
-                    <td
-                      colSpan={7}
-                      style={{ textAlign: "center", padding: "2rem" }}
-                    >
-                      Loading...
-                    </td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
-          </div>
-        </div>
-
-        <div className="pagination">
-          <button
-            className="btn"
-            disabled={page === 1}
-            onClick={() => setPage((p) => Math.max(1, p - 1))}
-          >
-            &larr; Previous
-          </button>
-          <span>
-            Page {page} of {totalPages || 1} (Total: {total})
+      {/* Search Stats */}
+      {searchStats && (
+        <div className="search-stats">
+          <span className="search-stats-text">
+            Found {searchStats.filtered} of {searchStats.total} logs
+            {searchStats.hasFieldSearch && " (field search)"}
+            {searchStats.hasTextSearch && " (text search)"}
           </span>
-          <button
-            className="btn"
-            disabled={page >= totalPages}
-            onClick={() => setPage((p) => p + 1)}
-          >
-            Next &rarr;
-          </button>
+          {searchStats.blobQuery && (
+            <span className="search-stats-text muted">
+              {blobSearchLoading && "Searching blobs…"}
+              {!blobSearchLoading &&
+                blobSearchError &&
+                `Blob search: ${blobSearchError}`}
+              {!blobSearchLoading &&
+                !blobSearchError &&
+                blobSearch?.engine &&
+                `Blob search: ${blobSearch.engine}${
+                  blobSearch.truncated ? " (truncated)" : ""
+                }`}
+            </span>
+          )}
+        </div>
+      )}
+
+      <div className="table-container" ref={parentRef}>
+        <div
+          style={{ height: virtualizer.getTotalSize(), position: "relative" }}
+        >
+          {virtualItems.map((virtualRow) => {
+            const row = rows[virtualRow.index];
+            if (!row) return null;
+            const expanded = expandedId === row.original.id;
+            const activeTab =
+              tabState[row.original.id] ?? ("request" as BlobKind);
+            return (
+              <div
+                key={row.id}
+                ref={(node) => virtualizer.measureElement(node)}
+                data-log-id={row.original.id}
+                data-index={virtualRow.index}
+                style={{
+                  position: "absolute",
+                  top: 0,
+                  left: 0,
+                  width: "100%",
+                  transform: `translateY(${virtualRow.start}px)`,
+                }}
+              >
+                <LogRow
+                  log={row.original}
+                  expanded={expanded}
+                  activeTab={activeTab}
+                  onToggle={(id) =>
+                    setExpandedId((prev) => (prev === id ? null : id))
+                  }
+                  onTabChange={(id, tab) =>
+                    setTabState((prev) => ({ ...prev, [id]: tab }))
+                  }
+                  blobBody={blobBodies[`${row.original.id}-${activeTab}`]}
+                  ensureBlob={ensureBlob}
+                  loadingBlob={
+                    !!loadingBlobs[`${row.original.id}-${activeTab}`]
+                  }
+                />
+              </div>
+            );
+          })}
         </div>
       </div>
     </div>
   );
-};
-
-export default Dashboard;
+}

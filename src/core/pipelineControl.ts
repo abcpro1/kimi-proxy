@@ -1,4 +1,4 @@
-import { JsonValue } from "./types.js";
+import type { JsonValue } from "./types.js";
 
 export const PIPELINE_MAX_ATTEMPTS_KEY = "__pipelineMaxAttempts";
 export const PIPELINE_RETRY_FLAG_KEY = "__pipelineRetryRequested";

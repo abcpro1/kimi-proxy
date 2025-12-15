@@ -1,217 +1,271 @@
+import { type ClientRequest } from "./schemas.js";
+import { createRequestId } from "../utils/ids.js";
+import { logger } from "../utils/logger.js";
+import type { JsonObject, JsonValue } from "./types.js";
 import {
-  ConversionContext,
-  PipelineResult,
-  ProviderRequestPayload,
-  ProxyRequest,
-  ProviderResponsePayload,
-  RequestTransform,
-  ResponseTransform,
-  JsonValue,
-  JsonObject,
+  ClientAdapter,
+  PipelineResult as PipelineResult,
+  ProviderAdapter,
+  ProviderResponse,
+  Response,
+  Transform as Transform,
+  Operation as Operation,
+  TransformContext,
 } from "./types.js";
-import { ConverterRegistry } from "./converters/types.js";
-import { LLMProvider } from "./providers/types.js";
 import {
   clearRetryRequest,
+  clearSyntheticResponseRequest,
   isRetryRequested,
   isSyntheticResponseRequested,
-  clearSyntheticResponseRequest,
   resolvePipelineMaxAttempts,
+  setPipelineMaxAttempts,
 } from "./pipelineControl.js";
-import { createSyntheticProviderResponse } from "./syntheticResponse.js";
-import { logger } from "../utils/logger.js";
+import {
+  createEnsureToolCallState,
+  getEnsureToolCallState,
+} from "./ensureToolCall.js";
 
-interface PipelineDeps {
-  converterRegistry: ConverterRegistry;
-  requestTransforms: RequestTransform[];
-  responseTransforms: ResponseTransform[];
+export class ClientRegistry {
+  private adapters = new Map<string, ClientAdapter>();
+
+  register(adapter: ClientAdapter) {
+    this.adapters.set(adapter.clientFormat, adapter);
+  }
+
+  resolve(clientFormat: string): ClientAdapter {
+    const adapter = this.adapters.get(clientFormat);
+    if (!adapter) {
+      throw new Error(`No client adapter registered for ${clientFormat}`);
+    }
+    return adapter;
+  }
 }
 
-const enum RequestStage {
-  Source = "source",
-  PostConversion = "post-conversion",
+export class ProviderRegistry {
+  private adapters = new Map<string, ProviderAdapter>();
+
+  register(adapter: ProviderAdapter) {
+    this.adapters.set(adapter.key, adapter);
+  }
+
+  resolve(key: string): ProviderAdapter {
+    const adapter = this.adapters.get(key);
+    if (!adapter) {
+      throw new Error(`No provider adapter registered for ${key}`);
+    }
+    return adapter;
+  }
 }
 
-const enum ResponseStage {
-  Provider = "provider",
-  PostConversion = "post-conversion",
+export interface PipelineOptions {
+  clientFormat: string;
+  providerKey: string;
+  providerConfig?: JsonObject;
+  requestBody: ClientRequest;
+  requestHeaders: Record<string, string>;
+  operation: Operation;
+  requestId?: string;
+  profile?: string;
+  ensureToolCall?: boolean;
 }
 
-export class LLMProxyPipeline {
-  constructor(private readonly deps: PipelineDeps) {}
+export class Pipeline {
+  constructor(
+    private readonly clients: ClientRegistry,
+    private readonly providers: ProviderRegistry,
+    private readonly transforms: Transform[] = [],
+  ) {}
 
-  async execute(
-    provider: LLMProvider,
-    request: ProxyRequest,
-    providerConfig?: JsonObject,
-  ): Promise<PipelineResult> {
-    const conversionContext: ConversionContext = {
-      request,
-      providerFormat: provider.format,
-    };
+  async execute(options: PipelineOptions): Promise<PipelineResult> {
+    const clientAdapter = this.clients.resolve(options.clientFormat);
+    const providerAdapter = this.providers.resolve(options.providerKey);
 
-    const converter = this.deps.converterRegistry.resolve(
-      request.clientFormat,
-      provider.format,
-      request.operation,
+    const context = clientAdapter.toUlx(
+      options.requestBody,
+      options.requestHeaders,
     );
-    const maxAttempts = resolvePipelineMaxAttempts(request.state);
+
+    context.operation = options.operation;
+    context.profile = options.profile;
+    context.id = options.requestId ?? context.id ?? createRequestId();
+    context.metadata.clientFormat = options.clientFormat;
+    context.metadata.providerFormat = providerAdapter.providerFormat;
+    context.metadata.clientRequest = options.requestBody;
+
+    if (options.ensureToolCall === true) {
+      if (!getEnsureToolCallState(context.state)) {
+        createEnsureToolCallState(context.state);
+      }
+      setPipelineMaxAttempts(
+        context.state,
+        resolveEnsureToolCallAttemptLimit(),
+      );
+    }
+
+    const maxAttempts = resolvePipelineMaxAttempts(context.state);
     let attempt = 0;
+
+    let lastProviderResponse: ProviderResponse = {
+      status: 500,
+      body: {},
+      headers: {},
+    };
+    let lastResponse: Response | undefined;
+    let lastClientResponse: JsonValue | undefined;
 
     while (true) {
       attempt += 1;
-      await this.applyRequestTransforms(RequestStage.Source, { request });
+      await this.runTransforms("ingress", { request: context });
 
-      const convertedRequest = await converter.convertRequest(
-        request.body,
-        conversionContext,
-      );
-
-      const providerRequest: ProviderRequestPayload = {
-        body: convertedRequest.body,
-        headers: convertedRequest.headers ?? {},
-      };
-
-      await this.applyRequestTransforms(RequestStage.PostConversion, {
-        request,
-        providerRequest,
-      });
-
-      // Check if request transforms requested a synthetic response to abort provider call
-      const useSyntheticResponse = isSyntheticResponseRequested(request.state);
-      let providerResponse: ProviderResponsePayload;
-
-      if (useSyntheticResponse) {
-        logger.warn(
-          { requestId: request.id },
-          "Synthetic response requested, bypassing provider invocation",
-        );
-        providerResponse = createSyntheticProviderResponse();
-        clearSyntheticResponseRequest(request.state);
+      if (isSyntheticResponseRequested(context.state)) {
+        clearSyntheticResponseRequest(context.state);
+        lastProviderResponse = createSyntheticProviderResponse();
+        lastResponse = createSyntheticResponse(context);
+        lastResponse.metadata = {
+          ...(lastResponse.metadata ?? {}),
+          provider: providerAdapter.key,
+          providerFormat: providerAdapter.providerFormat,
+          clientFormat: options.clientFormat,
+          synthetic: true,
+        };
       } else {
-        providerResponse = await provider.invoke({
-          request,
-          body: providerRequest.body,
-          headers: providerRequest.headers,
-          stream: request.stream,
-          providerConfig,
-        });
+        lastProviderResponse = await providerAdapter.invoke(
+          context,
+          options.providerConfig,
+        );
 
-        if (providerResponse.status >= 400) {
+        if (lastProviderResponse.status >= 400) {
+          lastResponse = await providerAdapter.toUlxResponse(
+            lastProviderResponse,
+            context,
+          );
+          lastResponse.metadata = {
+            ...(lastResponse.metadata ?? {}),
+            provider: providerAdapter.key,
+            providerFormat: providerAdapter.providerFormat,
+            clientFormat: options.clientFormat,
+          };
+
+          lastClientResponse = lastResponse.error
+            ? { error: lastResponse.error }
+            : clientAdapter.fromUlx(lastResponse, context);
+
+          clearRetryRequest(context.state);
           return {
-            statusCode: providerResponse.status,
-            responseBody: providerResponse.body,
-            providerResponse,
-            providerRequestBody: providerRequest.body,
-            request,
-            isError: true,
+            request: context,
+            response: lastResponse,
+            providerResponse: lastProviderResponse,
+            providerAdapter: providerAdapter.key,
+            clientResponse: lastClientResponse,
           };
         }
 
-        await this.applyResponseTransforms(ResponseStage.Provider, {
-          request,
-          providerResponse,
-        });
+        lastResponse = await providerAdapter.toUlxResponse(
+          lastProviderResponse,
+          context,
+        );
+
+        lastResponse.metadata = {
+          ...(lastResponse.metadata ?? {}),
+          provider: providerAdapter.key,
+          providerFormat: providerAdapter.providerFormat,
+          clientFormat: options.clientFormat,
+        };
       }
 
-      // Validate provider response body before conversion
-      if (!providerResponse.body || typeof providerResponse.body !== "object") {
-        logger.error(
-          {
-            requestId: request.id,
-            status: providerResponse.status,
-            bodyType: typeof providerResponse.body,
-          },
-          "Invalid provider response: body is missing or not an object",
-        );
-        throw new Error(
-          `Invalid provider response: body is ${typeof providerResponse.body}, body: ${JSON.stringify(providerResponse.body)}`,
-        );
-      }
+      await this.runTransforms("egress", {
+        request: context,
+        response: lastResponse,
+      });
 
-      const clientResponse = await converter.convertResponse(
-        providerResponse.body,
-        conversionContext,
-      );
-
-      const responseContext = { request, providerResponse, clientResponse };
-      await this.applyResponseTransforms(
-        ResponseStage.PostConversion,
-        responseContext,
-      );
-
-      const result: PipelineResult = {
-        statusCode: 200,
-        responseBody: responseContext.clientResponse,
-        providerResponse,
-        providerRequestBody: providerRequest.body,
-        request,
-        isError: false,
-      };
+      lastClientResponse = lastResponse.error
+        ? { error: lastResponse.error }
+        : clientAdapter.fromUlx(lastResponse, context);
 
       const shouldRetry =
-        attempt < maxAttempts && isRetryRequested(request.state);
+        attempt < maxAttempts && isRetryRequested(context.state);
       if (!shouldRetry) {
-        clearRetryRequest(request.state);
-        return result;
+        clearRetryRequest(context.state);
+        return {
+          request: context,
+          response: lastResponse,
+          providerResponse: lastProviderResponse,
+          providerAdapter: providerAdapter.key,
+          clientResponse: lastClientResponse,
+        };
       }
 
-      clearRetryRequest(request.state);
+      clearRetryRequest(context.state);
     }
   }
 
-  private async applyRequestTransforms(
-    stage: RequestStage,
-    context: {
-      request: ProxyRequest;
-      providerRequest?: ProviderRequestPayload;
-    },
+  private async runTransforms(
+    stage: Transform["stage"],
+    context: TransformContext,
   ) {
-    const transforms = this.transformsByStage(
-      this.deps.requestTransforms,
-      stage,
-    );
-    for (const transform of transforms) {
-      if (transform.applies(context)) {
-        await transform.transform(context);
-      }
-    }
-  }
-
-  private async applyResponseTransforms(
-    stage: ResponseStage,
-    context: {
-      request: ProxyRequest;
-      providerResponse?: ProviderResponsePayload;
-      clientResponse?: JsonValue;
-    },
-  ) {
-    const transforms = this.transformsByStage(
-      this.deps.responseTransforms,
-      stage,
-    );
-    for (const transform of transforms) {
-      if (transform.applies(context)) {
-        await transform.transform(context);
-      }
-    }
-  }
-
-  private transformsByStage<T extends { stage: string; priority?: number }>(
-    transforms: T[],
-    stage: string,
-  ): T[] {
-    return transforms
+    const transforms = this.transforms
       .map((transform, index) => ({ transform, index }))
       .filter((entry) => entry.transform.stage === stage)
       .sort((a, b) => {
         const priorityDelta =
           (a.transform.priority ?? 0) - (b.transform.priority ?? 0);
-        if (priorityDelta !== 0) {
-          return priorityDelta;
-        }
+        if (priorityDelta !== 0) return priorityDelta;
         return a.index - b.index;
       })
       .map((entry) => entry.transform);
+
+    for (const transform of transforms) {
+      try {
+        if (transform.applies(context)) {
+          await transform.transform(context);
+        }
+      } catch (error) {
+        logger.error(
+          { err: error, stage, transform: transform.name },
+          "Transform failed",
+        );
+        throw error;
+      }
+    }
   }
+}
+
+function createSyntheticProviderResponse(): ProviderResponse {
+  return {
+    status: 200,
+    body: {},
+    headers: {
+      "x-synthetic-response": "true",
+    },
+  };
+}
+
+function resolveEnsureToolCallAttemptLimit(): number {
+  const raw = Number(process.env.ENSURE_TOOL_CALL_MAX_ATTEMPTS ?? "3");
+  if (!Number.isFinite(raw) || raw < 1) {
+    return 3;
+  }
+  return Math.min(5, Math.floor(raw));
+}
+
+function createSyntheticResponse(context: {
+  id: string;
+  operation: Operation;
+}): Response {
+  return {
+    id: `synth_${context.id}`,
+    model: "synthetic",
+    operation: context.operation,
+    finish_reason: "stop",
+    output: [
+      {
+        type: "message",
+        role: "assistant",
+        content: [],
+        status: "completed",
+      },
+    ],
+    usage: { input_tokens: 0, output_tokens: 0, total_tokens: 0 },
+    metadata: { synthetic: true },
+  };
 }

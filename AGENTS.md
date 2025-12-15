@@ -1,1 +1,1 @@
-Before finishing, if you've made any code changes, run `npm run format && npm run lint`.
+Before finishing, if you've made any code changes, run `bun run format && bun run lint`.

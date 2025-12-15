@@ -1,4 +1,4 @@
-import Database from "better-sqlite3";
+import { Database } from "bun:sqlite";
 import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
@@ -11,10 +11,9 @@ export interface CachedSignature {
 }
 
 export class SignatureCache {
-  private db: Database.Database;
+  private db: Database;
   private memoryCache = new Map<string, CachedSignature>();
   private dbPath: string;
-  private cleanupCounter = 0;
 
   constructor(cacheDir?: string) {
     // Determine cache directory
@@ -29,7 +28,7 @@ export class SignatureCache {
     }
 
     this.dbPath = path.join(dir, "signatures.db");
-    this.db = new Database(this.dbPath);
+    this.db = new Database(this.dbPath, { create: true, strict: true });
 
     // Initialize database schema
     this.initSchema();
@@ -51,14 +50,17 @@ export class SignatureCache {
 
   private scheduleCleanup(): void {
     // Run cleanup periodically (every 100 operations)
-    setInterval(() => {
-      this.cleanup().catch((err) => {
+    const timer = setInterval(() => {
+      try {
+        this.cleanup();
+      } catch (err) {
         logger.error({ err }, "Failed to cleanup signature cache");
-      });
+      }
     }, 60000); // Check every minute
+    timer.unref?.();
   }
 
-  async store(toolCallId: string, signature: string): Promise<void> {
+  store(toolCallId: string, signature: string): void {
     const cached: CachedSignature = {
       tool_call_id: toolCallId,
       signature,
@@ -81,11 +83,9 @@ export class SignatureCache {
         "Failed to store signature in database",
       );
     }
-
-    this.cleanupCounter++;
   }
 
-  async retrieve(toolCallId: string): Promise<string | null> {
+  retrieve(toolCallId: string): string | null {
     // Check memory cache first (fast path)
     const cached = this.memoryCache.get(toolCallId);
     if (cached) {
@@ -118,7 +118,7 @@ export class SignatureCache {
     return null;
   }
 
-  async batchRetrieve(toolCallIds: string[]): Promise<Record<string, string>> {
+  batchRetrieve(toolCallIds: string[]): Record<string, string> {
     const result: Record<string, string> = {};
 
     // Check memory cache first
@@ -165,7 +165,7 @@ export class SignatureCache {
     return result;
   }
 
-  async cleanup(daysOld: number = 30): Promise<void> {
+  cleanup(daysOld: number = 30): void {
     try {
       const cutoff = Math.floor(
         (Date.now() - daysOld * 24 * 60 * 60 * 1000) / 1000,
@@ -192,7 +192,7 @@ export class SignatureCache {
     }
   }
 
-  async close(): Promise<void> {
+  close(): void {
     this.db.close();
   }
 }

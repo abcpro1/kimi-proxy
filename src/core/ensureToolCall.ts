@@ -1,4 +1,5 @@
-import { JsonObject, JsonValue } from "./types.js";
+import type { JsonObject, JsonValue, Message, Tool } from "./types.js";
+import { isJsonObject } from "./types.js";
 
 export const ENSURE_TOOL_CALL_STATE_KEY = "__ensureToolCall";
 export const DEFAULT_TERMINATION_TOOL_NAME = "done";
@@ -74,24 +75,22 @@ export function buildFinalAnswerRequirementInstruction(
   return FINAL_ANSWER_REQUIREMENT_TEMPLATE(toolName);
 }
 
-export function createTerminationToolDefinition(name: string): JsonObject {
+export function createTerminationToolDefinition(name: string): Tool {
   return {
     type: "function",
-    function: {
-      name,
-      description:
-        "Call this tool exactly once when you have fully completed all reasoning and actions.",
-      parameters: {
-        type: "object",
-        properties: {
-          final_answer: {
-            type: "string",
-            description: "Optional final answer to provide when terminating.",
-          },
+    name,
+    description:
+      "Call this tool exactly once when you have fully completed all reasoning and actions.",
+    parameters: {
+      type: "object",
+      properties: {
+        final_answer: {
+          type: "string",
+          description: "Optional final answer to provide when terminating.",
         },
-        required: [],
-        additionalProperties: false,
       },
+      required: [],
+      additionalProperties: false,
     },
   };
 }
@@ -100,30 +99,24 @@ export function createTerminationToolDefinition(name: string): JsonObject {
  * Get messages from the last user message to the end of the array.
  * Returns empty array if no user message is found.
  */
-export function getMessagesSinceLastUser(messages: JsonValue[]): JsonValue[] {
+export function getMessagesSinceLastUser(
+  messages: Message[] | undefined,
+): Message[] {
   if (!Array.isArray(messages) || messages.length === 0) {
     return [];
   }
 
-  // Find the index of the last user message by searching backward
   let lastUserIndex = -1;
   for (let i = messages.length - 1; i >= 0; i--) {
-    const m = messages[i];
-    if (isJsonObject(m) && m.role === "user") {
+    if (messages[i]?.role === "user") {
       lastUserIndex = i;
       break;
     }
   }
 
-  // If no user message found, return empty array
   if (lastUserIndex === -1) {
     return [];
   }
 
-  // Return messages from lastUserIndex to end (inclusive)
   return messages.slice(lastUserIndex);
-}
-
-function isJsonObject(value: JsonValue | undefined): value is JsonObject {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
 }

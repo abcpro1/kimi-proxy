@@ -1,10 +1,21 @@
 import { JsonValue, JsonObject } from "../core/types.js";
 
+function parseEnvVarReference(
+  value: string,
+): { name: string; suffix: string } | null {
+  if (!value.startsWith("$")) return null;
+
+  const match = value.slice(1).match(/^([A-Za-z_][A-Za-z0-9_]*)(.*)$/);
+  if (!match?.[1]) return null;
+
+  return { name: match[1], suffix: match[2] ?? "" };
+}
+
 /**
  * Resolves environment variable references in a value.
  * Supports:
  * - Simple reference: "$VAR_NAME" -> value of VAR_NAME
- * - Prefix reference: "$VAR_NAME/suffix" -> "value/suffix"
+ * - Prefix reference: "$VAR_NAME/suffix" -> "value/suffix" (suffix can be any string)
  * - No reference: "value" -> "value"
  *
  * @param value The value to resolve
@@ -15,19 +26,17 @@ export function resolveEnvVar(value: unknown): unknown {
     return value;
   }
 
-  // Check if it's an environment variable reference
-  if (value.startsWith("$")) {
-    const varName = value.substring(1);
-    const envValue = process.env[varName];
+  const ref = parseEnvVarReference(value);
+  if (!ref) return value;
 
-    if (envValue === undefined) {
-      throw new Error(`Environment variable ${varName} is not set`);
-    }
-
-    return envValue;
+  const envValue = process.env[ref.name];
+  if (envValue === undefined) {
+    throw new Error(`Environment variable ${ref.name} is not set`);
   }
 
-  return value;
+  return `${envValue}${ref.suffix}`;
+
+  // NOTE: Any further string interpolation is intentionally unsupported.
 }
 
 /**
@@ -69,7 +78,7 @@ export function resolveEnvVarsDeep(obj: unknown): unknown {
  */
 export function hasEnvVarReference(value: unknown): boolean {
   if (typeof value === "string") {
-    return value.startsWith("$");
+    return parseEnvVarReference(value) !== null;
   }
   return false;
 }

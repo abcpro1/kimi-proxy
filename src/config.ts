@@ -7,19 +7,16 @@ import type { JWTInput } from "google-auth-library";
 import {
   OpenAIConfig,
   type OpenAIModelConfig,
-} from "./core/providers/openaiProvider.js";
+} from "./core/providers/openai.js";
 import {
   OpenRouterConfig,
   type OpenRouterModelConfig,
-} from "./core/providers/openRouterProvider.js";
+} from "./core/providers/openrouter.js";
 import {
   VertexConfig,
   type VertexModelConfig,
-} from "./core/providers/vertexProvider.js";
-import {
-  LoadBalancingStrategy,
-  ModelDefinition,
-} from "./core/modelRegistry.js";
+} from "./core/providers/vertex.js";
+import { LoadBalancingStrategy, ModelDefinition } from "./core/modelRegistry.js";
 
 dotenv.config();
 
@@ -30,13 +27,18 @@ export interface AppConfig {
   };
   logging: {
     dbPath: string;
+    blobRoot: string;
   };
   streaming: {
     delay: number;
     chunkSize: number;
   };
+  livestore: {
+    batchSize: number;
+  };
   providers: {
     openai?: OpenAIConfig;
+    anthropic?: { apiKey: string; baseUrl?: string };
     openrouter?: OpenRouterConfig;
     vertex?: VertexConfig;
   };
@@ -56,7 +58,6 @@ function resolveOpenAI(): OpenAIConfig | undefined {
 }
 
 function resolveOpenRouter(): OpenRouterConfig | undefined {
-  const baseUrl = process.env.OPENROUTER_BASE_URL;
   const apiKey = process.env.OPENROUTER_API_KEY;
 
   // Only configure OpenRouter if API key is provided
@@ -65,8 +66,6 @@ function resolveOpenRouter(): OpenRouterConfig | undefined {
   }
 
   const config: OpenRouterConfig = {
-    // For baseUrl, use explicit value if provided, otherwise use OpenRouter's default
-    baseUrl: baseUrl || "https://openrouter.ai/api",
     apiKey,
   };
 
@@ -101,6 +100,15 @@ function resolveOpenRouter(): OpenRouterConfig | undefined {
   }
 
   return config;
+}
+
+function resolveAnthropic(): { apiKey: string; baseUrl?: string } | undefined {
+  const apiKey = process.env.ANTHROPIC_API_KEY;
+  if (!apiKey) return undefined;
+  return {
+    apiKey,
+    baseUrl: process.env.ANTHROPIC_BASE_URL,
+  };
 }
 
 function resolveVertex(): VertexConfig | undefined {
@@ -148,14 +156,18 @@ export function loadConfig(): AppConfig {
   const port = Number(process.env.PORT ?? "8000");
   const dbPath =
     process.env.LOG_DB_PATH ?? path.resolve(process.cwd(), "data", "logs.db");
+  const blobRoot =
+    process.env.LOG_BLOB_ROOT ?? path.resolve(process.cwd(), "data", "logs");
   const streamDelay = Number(process.env.STREAM_DELAY ?? "10");
   const streamChunkSize = Number(process.env.STREAM_CHUNK_SIZE ?? "5");
+  const livestoreBatch = Number(process.env.LIVESTORE_BATCH ?? "50");
 
   const openai = resolveOpenAI();
+  const anthropic = resolveAnthropic();
   const openrouter = resolveOpenRouter();
   const vertex = resolveVertex();
 
-  if (!openai && !openrouter && !vertex) {
+  if (!openai && !openrouter && !vertex && !anthropic) {
     throw new Error(
       "At least one provider (OpenAI, OpenRouter, or Vertex) must be configured",
     );
@@ -164,6 +176,9 @@ export function loadConfig(): AppConfig {
   const configuredProviders = new Set<string>();
   if (openai) {
     configuredProviders.add("openai");
+  }
+  if (anthropic) {
+    configuredProviders.add("anthropic");
   }
   if (openrouter) {
     configuredProviders.add("openrouter");
@@ -176,9 +191,10 @@ export function loadConfig(): AppConfig {
 
   return {
     server: { host, port },
-    logging: { dbPath },
+    logging: { dbPath, blobRoot },
     streaming: { delay: streamDelay, chunkSize: streamChunkSize },
-    providers: { openai, openrouter, vertex },
+    livestore: { batchSize: Math.max(1, Math.min(500, livestoreBatch)) },
+    providers: { openai, anthropic, openrouter, vertex },
     models: modelRegistry,
   };
 }
@@ -292,6 +308,17 @@ function validateModelProviderConfig(definition: ModelDefinition): void {
       throw new Error(
         `Model "${name}" (provider: ${provider}) is missing required configuration: apiKey. ` +
           `Set provider_config.apiKey or env OPENROUTER_API_KEY.`,
+      );
+    }
+    return;
+  }
+
+  if (provider === "anthropic") {
+    const cfg = (providerConfig || {}) as { apiKey?: string };
+    const hasApiKey = Boolean(cfg.apiKey || process.env.ANTHROPIC_API_KEY);
+    if (!hasApiKey) {
+      throw new Error(
+        `Model "${name}" (provider: ${provider}) is missing required configuration: apiKey (provider_config.apiKey or env ANTHROPIC_API_KEY).`,
       );
     }
     return;

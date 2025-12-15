@@ -6,6 +6,7 @@ services:
     environment:
       - PORT=8000
       - HOST=0.0.0.0
+      - LOG_LEVEL=debug
     env_file:
       - .env
     volumes:

@@ -3,14 +3,11 @@
   "configurations": [
     {
       "name": "Attach to Docker",
-      "type": "node",
+      "type": "bun",
       "request": "attach",
-      "address": "localhost",
-      "port": 9229,
+      "url": "ws://0.0.0.0:9229/debug",
       "localRoot": "${workspaceFolder}",
-      "remoteRoot": "/app",
-      "skipFiles": ["<node_internals>/**"],
-      "sourceMaps": true
+      "remoteRoot": "/app"
     },
     {
       "name": "Launch Dev (tsx)",
