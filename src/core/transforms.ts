@@ -407,6 +407,8 @@ export class EnsureToolCallResponseTransform implements Transform {
 
         if (!hasContent && finalAnswer) {
           messageBlock.content = [{ type: "text", text: finalAnswer }];
+        } else if (hasContent && finalAnswer) {
+          messageBlock.content.push({ type: "text", text: finalAnswer });
         }
 
         continue;
