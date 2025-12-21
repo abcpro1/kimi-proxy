@@ -16,7 +16,10 @@ import {
   VertexConfig,
   type VertexModelConfig,
 } from "./core/providers/vertex.js";
-import { LoadBalancingStrategy, ModelDefinition } from "./core/modelRegistry.js";
+import {
+  LoadBalancingStrategy,
+  ModelDefinition,
+} from "./core/modelRegistry.js";
 
 dotenv.config();
 

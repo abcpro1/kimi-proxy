@@ -39,11 +39,6 @@ import {
   openAIResponseToUlx,
 } from "./openai.js";
 
-const VERTEX_GLOBAL_MODELS = new Set([
-  "gemini-3-pro-preview",
-  "google/gemini-3-pro-preview",
-]);
-
 const MAAS_MODEL_PATTERN = /\/.*-maas$/i;
 
 function ulxContentToText(blocks: ContentBlock[]): string {
@@ -666,8 +661,8 @@ export class VertexProviderAdapter implements ProviderAdapter {
 
   private normalizeModelId(model?: string): string | undefined {
     if (!model) return undefined;
-    if (VERTEX_GLOBAL_MODELS.has(model)) {
-      return "google/gemini-3-pro-preview";
+    if (model.includes("gemini") && !model.includes("/")) {
+      return `google/${model}`;
     }
     return model;
   }
@@ -700,7 +695,7 @@ export class VertexProviderAdapter implements ProviderAdapter {
     model: string | undefined,
     configured: string,
   ): string {
-    if (model && VERTEX_GLOBAL_MODELS.has(model)) {
+    if (model && (model.includes("google/") || model.includes("gemini"))) {
       return "global";
     }
     return configured;
