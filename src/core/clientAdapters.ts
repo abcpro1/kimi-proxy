@@ -252,44 +252,42 @@ export class OpenAIChatClientAdapter implements ClientAdapter {
 
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   fromUlx(ulxResponse: Response, _ulxRequest: Request): JsonValue {
-    const contentBlocks = ulxResponse.output.find(
-      (entry) => entry.type === "message",
-    );
+    const textParts: string[] = [];
+    const reasoningParts: string[] = [];
+    let toolCalls: ToolCall[] | undefined = undefined;
 
-    let content: string | null = null;
-    let reasoning_content: string | undefined = undefined;
+    for (const block of ulxResponse.output) {
+      if (block.type === "message") {
+        for (const entry of block.content) {
+          if (entry.type === "reasoning") {
+            reasoningParts.push(entry.text ?? "");
+          }
+        }
 
-    if (contentBlocks?.type === "message") {
-      const textParts: string[] = [];
-      const reasoningParts: string[] = [];
+        const meaningfulContent = block.content.filter(
+          (c) => c.type !== "reasoning",
+        );
+        if (meaningfulContent.length > 0) {
+          const mixed = contentToText(meaningfulContent);
+          textParts.push(
+            typeof mixed === "string" ? mixed : JSON.stringify(mixed),
+          );
+        }
 
-      for (const entry of contentBlocks.content) {
-        if (entry.type === "text") {
-          textParts.push(entry.text ?? "");
-        } else if (entry.type === "reasoning") {
-          reasoningParts.push(entry.text ?? "");
+        if (block.tool_calls) {
+          toolCalls = [...(toolCalls ?? []), ...block.tool_calls];
+        }
+      } else if (block.type === "reasoning") {
+        for (const entry of block.content) {
+          if (entry.type === "reasoning") {
+            reasoningParts.push(entry.text ?? "");
+          }
         }
       }
-
-      if (textParts.length > 0) {
-        content = textParts.join("");
-      } else if (
-        contentBlocks.content.some(
-          (c) => c.type === "image_url" || c.type === "json",
-        )
-      ) {
-        const mixed = contentToText(
-          contentBlocks.content.filter((c) => c.type !== "reasoning"),
-        );
-        content = typeof mixed === "string" ? mixed : JSON.stringify(mixed);
-      } else {
-        content = null;
-      }
-
-      if (reasoningParts.length > 0) {
-        reasoning_content = reasoningParts.join("\n\n");
-      }
     }
+
+    const content = textParts.join("") || null;
+    const reasoning_content = reasoningParts.join("\n\n") || undefined;
 
     return {
       id: ulxResponse.id,
@@ -301,19 +299,18 @@ export class OpenAIChatClientAdapter implements ClientAdapter {
           index: 0,
           message: {
             role: "assistant",
-            content,
             ...(reasoning_content ? { reasoning_content } : {}),
-            tool_calls:
-              contentBlocks?.type === "message" && contentBlocks.tool_calls
-                ? contentBlocks.tool_calls.map((tc) => ({
-                    id: tc.id,
-                    type: "function",
-                    function: {
-                      name: tc.name,
-                      arguments: tc.arguments,
-                    },
-                  }))
-                : undefined,
+            content,
+            tool_calls: toolCalls
+              ? toolCalls.map((tc) => ({
+                  id: tc.id,
+                  type: "function",
+                  function: {
+                    name: tc.name,
+                    arguments: tc.arguments,
+                  },
+                }))
+              : undefined,
           },
           finish_reason: ulxResponse.finish_reason ?? "stop",
         },
@@ -407,14 +404,24 @@ export class AnthropicMessagesClientAdapter implements ClientAdapter {
       toolCalls.length = 0;
     }
 
-    function anthropicBlockToUlxContent(block: Record<string, unknown>) {
+    function anthropicBlockToUlxContent(
+      block: Record<string, unknown>,
+    ): ContentBlock | undefined {
       const declaredType = typeof block.type === "string" ? block.type : "";
       if (
         declaredType === "thinking" ||
         declaredType === "redacted_thinking" ||
         typeof block.thinking === "string"
       ) {
-        return undefined;
+        return {
+          type: "reasoning",
+          text: (block.thinking as string) ?? (block.text as string) ?? "",
+          data: block.signature
+            ? { signature: block.signature as JsonValue }
+            : declaredType === "redacted_thinking"
+              ? { redacted: true }
+              : undefined,
+        };
       }
 
       if (typeof block.text === "string") {
@@ -556,48 +563,66 @@ export class AnthropicMessagesClientAdapter implements ClientAdapter {
     } satisfies Request;
   }
 
-  fromUlx(ulxResponse: Response): JsonValue {
-    const contentBlocks = ulxResponse.output.find(
-      (entry) => entry.type === "message",
-    );
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  fromUlx(ulxResponse: Response, _ulxRequest: Request): JsonValue {
+    const thinkingBlocks: AnthropicContentBlock[] = [];
+    const textBlocks: AnthropicContentBlock[] = [];
+    const toolUseBlocks: AnthropicContentBlock[] = [];
 
-    const messageContent =
-      contentBlocks?.type === "message"
-        ? contentToText(contentBlocks.content)
-        : "";
+    for (const block of ulxResponse.output) {
+      if (block.type === "reasoning") {
+        for (const entry of block.content) {
+          if (entry.type === "reasoning") {
+            thinkingBlocks.push({
+              type: "thinking",
+              thinking: entry.text ?? "",
+              signature: (entry.data as Record<string, unknown>)
+                ?.signature as string,
+            });
+          }
+        }
+      } else if (block.type === "message") {
+        const messageContent = contentToText(block.content);
+        if (typeof messageContent === "string") {
+          if (messageContent)
+            textBlocks.push({ type: "text", text: messageContent });
+        } else if (Array.isArray(messageContent)) {
+          for (const item of messageContent) {
+            if (item && typeof item === "object") {
+              const b = item as AnthropicContentBlock;
+              if (b.type === "thinking") {
+                thinkingBlocks.push(b);
+              } else if (b.type === "text") {
+                textBlocks.push(b);
+              }
+            }
+          }
+        } else if (
+          typeof messageContent === "object" &&
+          messageContent !== null &&
+          "text" in messageContent
+        ) {
+          textBlocks.push(messageContent as unknown as AnthropicContentBlock);
+        }
 
-    const content: AnthropicContentBlock[] = [];
-    if (typeof messageContent === "string") {
-      if (messageContent) content.push({ type: "text", text: messageContent });
-    } else if (Array.isArray(messageContent)) {
-      for (const item of messageContent) {
-        if (item && typeof item === "object") {
-          const block = item as AnthropicContentBlock;
-          if (block.type === "thinking") {
-            content.push(block);
-          } else if (block.type === "text") {
-            content.push(block);
+        if (block.tool_calls) {
+          for (const tc of block.tool_calls) {
+            toolUseBlocks.push({
+              type: "tool_use",
+              id: tc.id,
+              name: tc.name,
+              input: JSON.parse(tc.arguments),
+            });
           }
         }
       }
-    } else if (
-      typeof messageContent === "object" &&
-      messageContent !== null &&
-      "text" in messageContent
-    ) {
-      content.push(messageContent as unknown as AnthropicContentBlock);
     }
 
-    if (contentBlocks?.type === "message" && contentBlocks.tool_calls) {
-      for (const tc of contentBlocks.tool_calls) {
-        content.push({
-          type: "tool_use",
-          id: tc.id,
-          name: tc.name,
-          input: JSON.parse(tc.arguments),
-        });
-      }
-    }
+    const content: AnthropicContentBlock[] = [
+      ...thinkingBlocks,
+      ...textBlocks,
+      ...toolUseBlocks,
+    ];
 
     return {
       id: ulxResponse.id,
@@ -950,7 +975,6 @@ export class OpenAIResponsesClientAdapter implements ClientAdapter {
 
   fromUlx(ulxResponse: Response, ulxRequest: Request): JsonValue {
     const outputBlocks = ulxResponse.output;
-    const output: OpenAIResponsesOutputItem[] = [];
     const textParts: string[] = [];
 
     const createdAt = Math.floor(Date.now() / 1000);
@@ -958,6 +982,10 @@ export class OpenAIResponsesClientAdapter implements ClientAdapter {
     let messageIndex = 0;
     let functionCallIndex = 0;
     let reasoningIndex = 0;
+
+    const collectedReasoning: OpenAIResponsesOutputItem[] = [];
+    const collectedMessages: OpenAIResponsesOutputItem[] = [];
+    const collectedFunctionCalls: OpenAIResponsesOutputItem[] = [];
 
     for (const block of outputBlocks) {
       if (block.type === "message") {
@@ -969,11 +997,6 @@ export class OpenAIResponsesClientAdapter implements ClientAdapter {
           type: "output_text";
           text: string;
           annotations: unknown[];
-        }> = [];
-
-        const reasoningContent: Array<{
-          type: "reasoning_text";
-          text: string;
         }> = [];
 
         for (const entry of block.content) {
@@ -994,24 +1017,17 @@ export class OpenAIResponsesClientAdapter implements ClientAdapter {
             }
             content.push({ type: "output_text", text, annotations: [] });
           } else if (entry.type === "reasoning") {
-            reasoningContent.push({
-              type: "reasoning_text",
-              text: entry.text ?? "",
+            collectedReasoning.push({
+              type: "reasoning",
+              id: `rsn_${ulxResponse.id}_${reasoningIndex++}`,
+              status: "completed",
+              content: [{ type: "reasoning_text", text: entry.text ?? "" }],
+              summary: [],
             });
           }
         }
 
-        if (reasoningContent.length > 0) {
-          output.push({
-            type: "reasoning",
-            id: `rsn_${ulxResponse.id}_${reasoningIndex++}`,
-            status: "completed",
-            content: reasoningContent,
-            summary: [],
-          });
-        }
-
-        output.push({
+        collectedMessages.push({
           type: "message",
           id: messageId,
           role: "assistant",
@@ -1021,7 +1037,7 @@ export class OpenAIResponsesClientAdapter implements ClientAdapter {
 
         if (block.tool_calls) {
           for (const call of block.tool_calls) {
-            output.push({
+            collectedFunctionCalls.push({
               type: "function_call",
               id: `fc_${ulxResponse.id}_${functionCallIndex++}`,
               call_id: call.id,
@@ -1032,7 +1048,7 @@ export class OpenAIResponsesClientAdapter implements ClientAdapter {
           }
         }
       } else if (block.type === "tool_call") {
-        output.push({
+        collectedFunctionCalls.push({
           type: "function_call",
           id: `fc_${ulxResponse.id}_${functionCallIndex++}`,
           call_id: block.call_id,
@@ -1041,7 +1057,7 @@ export class OpenAIResponsesClientAdapter implements ClientAdapter {
           status: block.status === "pending" ? "in_progress" : "completed",
         });
       } else if (block.type === "reasoning") {
-        output.push({
+        collectedReasoning.push({
           type: "reasoning",
           id: `rsn_${ulxResponse.id}_${reasoningIndex++}`,
           status: "completed",
@@ -1059,6 +1075,12 @@ export class OpenAIResponsesClientAdapter implements ClientAdapter {
         });
       }
     }
+
+    const output: OpenAIResponsesOutputItem[] = [
+      ...collectedReasoning,
+      ...collectedMessages,
+      ...collectedFunctionCalls,
+    ];
 
     const inputTokens = ulxResponse.usage?.input_tokens ?? 0;
     const outputTokens = ulxResponse.usage?.output_tokens ?? 0;

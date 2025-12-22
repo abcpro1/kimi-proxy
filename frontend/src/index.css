@@ -565,6 +565,16 @@ body {
   padding-top: 1rem;
 }
 
+/* Tabs Container - holds tabs and copy button */
+.tabs-container {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin-bottom: 0.75rem;
+  flex-wrap: wrap;
+}
+
 /* Tabs */
 .tabs {
   display: inline-flex;
@@ -764,6 +774,35 @@ body {
   transform: scale(0.95);
 }
 
+/* Copy Path Button for Log Cards */
+.copy-path-btn {
+  background: var(--panel-alt);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 0.5rem 0.75rem;
+  font-size: 0.875rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all var(--transition);
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  white-space: nowrap;
+}
+
+.copy-path-btn:hover {
+  background: var(--accent-light);
+  border-color: var(--accent);
+  color: var(--accent);
+  transform: translateY(-1px);
+  box-shadow: var(--shadow-sm);
+}
+
+.copy-path-btn:active {
+  transform: translateY(0) scale(0.98);
+}
+
 .json-tree-container {
   padding: 1rem;
   overflow: auto;
@@ -807,6 +846,12 @@ body {
 }
 
 .dark .json-copy-btn {
+  background: var(--bg-secondary);
+  color: var(--text);
+  border-color: var(--border);
+}
+
+.dark .copy-path-btn {
   background: var(--bg-secondary);
   color: var(--text);
   border-color: var(--border);
@@ -897,6 +942,11 @@ body {
 
   .json-copy-btn {
     padding: 0.25rem 0.5rem;
+    font-size: 0.7rem;
+  }
+
+  .copy-path-btn {
+    padding: 0.25rem 0.375rem;
     font-size: 0.7rem;
   }
 }

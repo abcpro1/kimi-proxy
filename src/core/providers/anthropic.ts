@@ -22,6 +22,8 @@ const AnthropicContentSchema = z
   .object({
     type: z.string(),
     text: z.string().optional(),
+    thinking: z.string().optional(),
+    signature: z.string().optional(),
   })
   .passthrough();
 
@@ -72,6 +74,13 @@ function toAnthropicContent(blocks: ContentBlock[]): JsonObject[] {
   if (!blocks.length) return [{ type: "text", text: "" }];
   return blocks.map((entry) => {
     if (entry.type === "text") return { type: "text", text: entry.text ?? "" };
+    if (entry.type === "reasoning") {
+      return {
+        type: "thinking",
+        thinking: entry.text ?? "",
+        signature: (entry.data as JsonObject)?.signature,
+      } as JsonObject;
+    }
     if (entry.type === "image_url")
       if (typeof entry.url === "string") {
         const match = entry.url.match(/^data:([^;]+);base64,(.+)$/);
@@ -119,7 +128,8 @@ function anthropicResponseToUlx(
       type: "reasoning",
       content: reasoning.map((part) => ({
         type: "reasoning",
-        text: part.text ?? "",
+        text: part.thinking ?? part.text ?? "",
+        data: part.signature ? { signature: part.signature } : undefined,
       })),
       summary: [],
     });

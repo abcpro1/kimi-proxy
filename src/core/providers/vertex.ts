@@ -644,17 +644,83 @@ export class VertexProviderAdapter implements ProviderAdapter {
 
   private toVertexTools(tools?: Tool[]): VertexTool[] | undefined {
     if (!tools?.length) return undefined;
+
+    function flattenJsonSchema(schema: JsonValue): JsonValue | undefined {
+      if (!schema || typeof schema !== "object" || Array.isArray(schema)) {
+        return schema;
+      }
+
+      const obj = { ...schema } as JsonObject;
+      const definitions = obj.definitions as
+        | Record<string, JsonValue>
+        | undefined;
+
+      delete obj.definitions;
+
+      function resolveRef(
+        target: JsonValue | undefined,
+        path: string[],
+      ): JsonValue | undefined {
+        if (!target || typeof target !== "object" || Array.isArray(target)) {
+          return target;
+        }
+
+        const copy = { ...(target as JsonObject) };
+
+        for (const key in copy) {
+          const value = copy[key];
+
+          if (
+            key === "$ref" &&
+            typeof value === "string" &&
+            value.startsWith("#/definitions/")
+          ) {
+            const defName = value.slice(14);
+            const definition = definitions?.[defName];
+
+            if (definition) {
+              delete copy.$ref;
+              const resolved = resolveRef(definition, [...path, defName]);
+
+              if (
+                resolved &&
+                typeof resolved === "object" &&
+                !Array.isArray(resolved)
+              ) {
+                Object.assign(copy, resolved);
+              }
+            }
+          } else if (key === "$ref" && typeof value === "string") {
+            delete copy.$ref;
+          } else {
+            copy[key] = resolveRef(value, path);
+          }
+        }
+
+        return copy;
+      }
+
+      return resolveRef(obj, []);
+    }
+
     return [
       {
-        functionDeclarations: tools.map(
-          (tool) =>
-            ({
-              name: tool.name,
-              description: tool.description,
-              parameters:
-                tool.parameters as unknown as FunctionDeclarationSchema,
-            }) as FunctionDeclaration,
-        ),
+        functionDeclarations: tools.map((tool) => {
+          let parameters = tool.parameters as unknown as JsonValue;
+          if (
+            parameters &&
+            typeof parameters === "object" &&
+            !Array.isArray(parameters)
+          ) {
+            parameters = flattenJsonSchema(parameters) as JsonValue;
+          }
+
+          return {
+            name: tool.name,
+            description: tool.description,
+            parameters: parameters as unknown as FunctionDeclarationSchema,
+          } as FunctionDeclaration;
+        }),
       },
     ] as VertexTool[];
   }

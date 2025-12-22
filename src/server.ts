@@ -483,6 +483,47 @@ export async function createServer(
     });
   });
 
+  server.get("/api/config", (_req, reply) => {
+    reply.send({
+      blobRoot: config.logging.blobRoot,
+    });
+  });
+
+  server.get("/api/logs/:id/path", (req, reply) => {
+    const { id } = req.params as Record<string, string>;
+    const meta = logStore.readMetadata(Number(id));
+    if (!meta) {
+      reply.status(404).send({ error: { message: "Log not found" } });
+      return;
+    }
+
+    // Build the absolute path from the relative paths stored
+    // Get the date components from timestamp
+    const date = new Date(meta.timestamp);
+    const year = date.getUTCFullYear();
+    const month = String(date.getUTCMonth() + 1).padStart(2, "0");
+    const day = String(date.getUTCDate()).padStart(2, "0");
+
+    // Directory path: {blobRoot}/{YYYY}/{MM}/{DD}/{request_id}/
+    const dirPath = `${config.logging.blobRoot}/${year}/${month}/${day}/${meta.request_id}/`;
+
+    reply.send({
+      directory: dirPath,
+      request: meta.request_path
+        ? `${config.logging.blobRoot}/${meta.request_path}`
+        : null,
+      response: meta.response_path
+        ? `${config.logging.blobRoot}/${meta.response_path}`
+        : null,
+      providerRequest: meta.provider_request_path
+        ? `${config.logging.blobRoot}/${meta.provider_request_path}`
+        : null,
+      providerResponse: meta.provider_response_path
+        ? `${config.logging.blobRoot}/${meta.provider_response_path}`
+        : null,
+    });
+  });
+
   return server;
 }
 

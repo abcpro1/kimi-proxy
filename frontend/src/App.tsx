@@ -25,8 +25,9 @@ import { syncLogs } from "./data/sync";
 import { fetchBlob } from "./data/blobs";
 import { searchLogBlobs } from "./data/search";
 import "./index.css";
-import { RefreshCw, Pause, Sun, Moon, SunMoon } from "lucide-react";
+import { RefreshCw, Pause, Sun, Moon, SunMoon, FolderOpen } from "lucide-react";
 
+import { CopyButton } from "./components/CopyButton";
 const JSONViewer = React.lazy(() => import("./components/JSONViewer"));
 
 type BlobKind =
@@ -104,6 +105,10 @@ const LogRow = React.memo(
     ensureBlob: (logId: string, kind: BlobKind) => Promise<void>;
     loadingBlob: boolean;
   }) {
+    const [logDirectoryPath, setLogDirectoryPath] = useState<string | null>(
+      null,
+    );
+
     const summary = log.summary ? parseJson(log.summary) : null;
     const preview =
       summary && typeof summary === "object" && "preview" in summary
@@ -121,11 +126,30 @@ const LogRow = React.memo(
       { id: "provider-response", label: "Provider Response" },
     ];
 
+    // Fetch log directory path when expanded
     useEffect(() => {
       if (expanded) {
         void ensureBlob(log.id, activeTab);
+        // Fetch the absolute path from the backend
+        const apiBase = import.meta.env.VITE_API_URL ?? "";
+        fetch(`${apiBase}/api/logs/${log.id}/path`)
+          .then((res) => res.json())
+          .then((data) => {
+            if (data.directory) {
+              setLogDirectoryPath(data.directory);
+            }
+          })
+          .catch((err) => {
+            console.error("Could not fetch log path:", err);
+            setLogDirectoryPath(null);
+          });
+      } else {
+        // Clear path when collapsed
+        setLogDirectoryPath(null);
       }
-    }, [expanded, activeTab, log.id]);
+    }, [expanded, activeTab, log.id, log.timestamp, log.request_id]);
+
+    const CopyIcon = <FolderOpen size={14} />;
 
     return (
       <div className={`log-card ${expanded ? "expanded" : ""}`}>
@@ -146,20 +170,31 @@ const LogRow = React.memo(
 
         {expanded && (
           <div className="log-card-body">
-            <div className="tabs">
-              {tabs.map((tab) => (
-                <button
-                  key={tab.id}
-                  className={`tab-btn ${activeTab === tab.id ? "active" : ""}`}
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    onTabChange(log.id, tab.id);
-                    void ensureBlob(log.id, tab.id);
-                  }}
-                >
-                  {tab.label}
-                </button>
-              ))}
+            <div className="tabs-container">
+              <div className="tabs">
+                {tabs.map((tab) => (
+                  <button
+                    key={tab.id}
+                    className={`tab-btn ${activeTab === tab.id ? "active" : ""}`}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onTabChange(log.id, tab.id);
+                      void ensureBlob(log.id, tab.id);
+                    }}
+                  >
+                    {tab.label}
+                  </button>
+                ))}
+              </div>
+              {logDirectoryPath && (
+                <CopyButton
+                  textToCopy={logDirectoryPath}
+                  className="copy-path-btn"
+                  icon={CopyIcon}
+                  label="Copy Path"
+                  title="Copy log directory path"
+                />
+              )}
             </div>
             <div className="tab-content">
               <Suspense
