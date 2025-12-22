@@ -1,15 +1,11 @@
 import { describe, it, expect } from "vitest";
-import {
-  UlxOperation,
-  type UlxRequest,
-  type UlxResponse,
-} from "../src/ulx/types.js";
-import { NormalizeUlxResponseTransform } from "../src/ulx/transforms.js";
+import { Operation, type Request, type Response } from "../src/core/types.js";
+import { NormalizeResponseTransform } from "../src/core/transforms.js";
 
-const baseRequest: UlxRequest = {
+const baseRequest: Request = {
   id: "req-1",
   model: "model",
-  operation: UlxOperation.Chat,
+  operation: Operation.Chat,
   messages: [],
   stream: false,
   state: {},
@@ -17,13 +13,13 @@ const baseRequest: UlxRequest = {
   metadata: { clientFormat: "openai", headers: {} },
 };
 
-describe("NormalizeUlxResponseTransform", () => {
+describe("NormalizeResponseTransform", () => {
   it("sanitizes tool call arguments and infers finish reason", () => {
-    const transform = new NormalizeUlxResponseTransform();
+    const transform = new NormalizeResponseTransform();
     const response = {
       id: "resp-1",
       model: "model",
-      operation: UlxOperation.Chat,
+      operation: Operation.Chat,
       output: [
         {
           type: "message",
@@ -45,7 +41,7 @@ describe("NormalizeUlxResponseTransform", () => {
           ],
         },
       ],
-    } as unknown as UlxResponse;
+    } as unknown as Response;
 
     transform.transform({ request: baseRequest, response });
 

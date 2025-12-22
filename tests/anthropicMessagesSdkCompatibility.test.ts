@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { AnthropicMessagesClientAdapter } from "../src/ulx/clientAdapters.js";
+import { AnthropicMessagesClientAdapter } from "../src/core/clientAdapters.js";
 
 describe("AnthropicMessagesClientAdapter (SDK compatibility)", () => {
   type ToUlxInput = Parameters<AnthropicMessagesClientAdapter["toUlx"]>[0];

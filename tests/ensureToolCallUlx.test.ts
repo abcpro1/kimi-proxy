@@ -1,39 +1,39 @@
 import { describe, expect, it } from "vitest";
-import { OpenAIChatClientAdapter } from "../src/ulx/clientAdapters.js";
+import { OpenAIChatClientAdapter } from "../src/core/clientAdapters.js";
 import {
   ClientFormat,
   type JsonObject,
-  UlxOperation,
-  type UlxProviderAdapter,
-  type UlxProviderResponse,
-  type UlxRequest,
-  type UlxResponse,
-} from "../src/ulx/types.js";
+  Operation,
+  type ProviderAdapter,
+  type ProviderResponse,
+  type Request,
+  type Response,
+} from "../src/core/types.js";
 import {
-  UlxClientRegistry,
-  UlxPipeline,
-  UlxProviderRegistry,
-} from "../src/ulx/pipeline.js";
+  ClientRegistry,
+  Pipeline,
+  ProviderRegistry,
+} from "../src/core/pipeline.js";
 import {
   EnsureToolCallRequestTransform,
   EnsureToolCallResponseTransform,
-  NormalizeUlxResponseTransform,
-  NormalizeUlxTransform,
+  NormalizeResponseTransform,
+  NormalizeTransform,
   PropagateFinishReasonsTransform,
-} from "../src/ulx/transforms.js";
+} from "../src/core/transforms.js";
 import {
   createEnsureToolCallState,
   DEFAULT_TERMINATION_TOOL_NAME,
-} from "../src/ulx/ensureToolCall.js";
+} from "../src/core/ensureToolCall.js";
 import {
   PIPELINE_RETRY_FLAG_KEY,
   SYNTHETIC_RESPONSE_FLAG_KEY,
-} from "../src/ulx/pipelineControl.js";
+} from "../src/core/pipelineControl.js";
 
 describe("EnsureToolCallRequestTransform", () => {
   it("injects termination tool and base instructions", () => {
     const transform = new EnsureToolCallRequestTransform();
-    const request = createUlxRequest({
+    const request = createRequest({
       messages: [
         {
           role: "system",
@@ -63,7 +63,7 @@ describe("EnsureToolCallRequestTransform", () => {
 
   it("skips enforcement and requests synthetic response when a prior assistant message lacks tool calls", () => {
     const transform = new EnsureToolCallRequestTransform();
-    const request = createUlxRequest({
+    const request = createRequest({
       messages: [
         { role: "user", content: [{ type: "text", text: "Hello" }] },
         {
@@ -92,7 +92,7 @@ describe("EnsureToolCallRequestTransform", () => {
 
   it("does not skip when assistant after last user message has tool calls", () => {
     const transform = new EnsureToolCallRequestTransform();
-    const request = createUlxRequest({
+    const request = createRequest({
       messages: [
         { role: "user", content: [{ type: "text", text: "Hello" }] },
         { role: "assistant", content: [{ type: "text", text: "Hi there!" }] },
@@ -121,7 +121,8 @@ describe("EnsureToolCallRequestTransform", () => {
 
   it("skips enforcement for TodoWrite + summary heuristic and requests synthetic response", () => {
     const transform = new EnsureToolCallRequestTransform();
-    const request = createUlxRequest({
+    const request = createRequest({
+      model: "kimi-k2",
       messages: [
         { role: "user", content: [{ type: "text", text: "Hello" }] },
         {
@@ -151,16 +152,16 @@ describe("EnsureToolCallRequestTransform", () => {
 describe("EnsureToolCallResponseTransform", () => {
   it("requests a retry when provider omits tool calls", () => {
     const transform = new EnsureToolCallResponseTransform();
-    const request = createUlxRequest({
+    const request = createRequest({
       messages: [{ role: "user", content: [{ type: "text", text: "Hello" }] }],
     });
     const ensureState = createEnsureToolCallState(request.state);
     expect(ensureState.pendingReminder).toBe(false);
 
-    const response: UlxResponse = {
+    const response: Response = {
       id: "resp-1",
       model: "model",
-      operation: UlxOperation.Chat,
+      operation: Operation.Chat,
       finish_reason: "stop",
       output: [
         {
@@ -180,15 +181,15 @@ describe("EnsureToolCallResponseTransform", () => {
 
   it("accepts 'Final' tool name (case-insensitive) as termination and converts final_answer to content", () => {
     const transform = new EnsureToolCallResponseTransform();
-    const request = createUlxRequest({
+    const request = createRequest({
       messages: [{ role: "user", content: [{ type: "text", text: "Hello" }] }],
     });
     createEnsureToolCallState(request.state);
 
-    const response: UlxResponse = {
+    const response: Response = {
       id: "resp-1",
       model: "model",
-      operation: UlxOperation.Chat,
+      operation: Operation.Chat,
       finish_reason: "tool_calls",
       output: [
         {
@@ -229,16 +230,16 @@ describe("EnsureToolCallResponseTransform", () => {
 
   it("accepts response with summary keyword and exactly one TodoWrite tool call as termination heuristic", () => {
     const transform = new EnsureToolCallResponseTransform();
-    const request = createUlxRequest({
+    const request = createRequest({
       messages: [{ role: "user", content: [{ type: "text", text: "Hello" }] }],
     });
     const ensureState = createEnsureToolCallState(request.state);
     expect(ensureState.pendingReminder).toBe(false);
 
-    const response: UlxResponse = {
+    const response: Response = {
       id: "resp-1",
       model: "model",
-      operation: UlxOperation.Chat,
+      operation: Operation.Chat,
       finish_reason: "tool_calls",
       output: [
         {
@@ -271,15 +272,15 @@ describe("EnsureToolCallResponseTransform", () => {
 
   it("does not treat tool names containing digits as termination tools", () => {
     const transform = new EnsureToolCallResponseTransform();
-    const request = createUlxRequest({
+    const request = createRequest({
       messages: [{ role: "user", content: [{ type: "text", text: "Hello" }] }],
     });
     createEnsureToolCallState(request.state);
 
-    const response: UlxResponse = {
+    const response: Response = {
       id: "resp-1",
       model: "model",
-      operation: UlxOperation.Chat,
+      operation: Operation.Chat,
       finish_reason: "tool_calls",
       output: [
         {
@@ -319,21 +320,21 @@ describe("EnsureToolCallResponseTransform", () => {
 
 describe("Ensure tool call ULX pipeline integration", () => {
   it("retries until termination tool is observed and converts summary into assistant content", async () => {
-    const clientRegistry = new UlxClientRegistry();
+    const clientRegistry = new ClientRegistry();
     clientRegistry.register(new OpenAIChatClientAdapter());
 
-    const providerCalls: UlxRequest[] = [];
+    const providerCalls: Request[] = [];
     const provider = new SequenceProviderAdapter((request) => {
       providerCalls.push(structuredClone(request));
     });
 
-    const providerRegistry = new UlxProviderRegistry();
+    const providerRegistry = new ProviderRegistry();
     providerRegistry.register(provider);
 
-    const pipeline = new UlxPipeline(clientRegistry, providerRegistry, [
-      new NormalizeUlxTransform(),
+    const pipeline = new Pipeline(clientRegistry, providerRegistry, [
+      new NormalizeTransform(),
       new EnsureToolCallRequestTransform(),
-      new NormalizeUlxResponseTransform(),
+      new NormalizeResponseTransform(),
       new EnsureToolCallResponseTransform(),
       new PropagateFinishReasonsTransform(),
     ]);
@@ -346,7 +347,7 @@ describe("Ensure tool call ULX pipeline integration", () => {
         messages: [{ role: "user", content: "Hello" }],
       },
       requestHeaders: {},
-      operation: UlxOperation.Chat,
+      operation: Operation.Chat,
       ensureToolCall: true,
     });
 
@@ -369,11 +370,11 @@ describe("Ensure tool call ULX pipeline integration", () => {
   });
 
   it("returns a synthetic response when termination pattern already exists in the prompt", async () => {
-    const clientRegistry = new UlxClientRegistry();
+    const clientRegistry = new ClientRegistry();
     clientRegistry.register(new OpenAIChatClientAdapter());
 
     let providerCallCount = 0;
-    const provider: UlxProviderAdapter = {
+    const provider: ProviderAdapter = {
       key: "never",
       providerFormat: "mock",
       async invoke() {
@@ -387,13 +388,13 @@ describe("Ensure tool call ULX pipeline integration", () => {
       },
     };
 
-    const providerRegistry = new UlxProviderRegistry();
+    const providerRegistry = new ProviderRegistry();
     providerRegistry.register(provider);
 
-    const pipeline = new UlxPipeline(clientRegistry, providerRegistry, [
-      new NormalizeUlxTransform(),
+    const pipeline = new Pipeline(clientRegistry, providerRegistry, [
+      new NormalizeTransform(),
       new EnsureToolCallRequestTransform(),
-      new NormalizeUlxResponseTransform(),
+      new NormalizeResponseTransform(),
       new EnsureToolCallResponseTransform(),
       new PropagateFinishReasonsTransform(),
     ]);
@@ -420,7 +421,7 @@ describe("Ensure tool call ULX pipeline integration", () => {
         ],
       },
       requestHeaders: {},
-      operation: UlxOperation.Chat,
+      operation: Operation.Chat,
       ensureToolCall: true,
     });
 
@@ -433,24 +434,24 @@ describe("Ensure tool call ULX pipeline integration", () => {
   });
 });
 
-class SequenceProviderAdapter implements UlxProviderAdapter {
+class SequenceProviderAdapter implements ProviderAdapter {
   key = "sequence";
   providerFormat = "mock";
 
   private callIndex = 0;
 
-  constructor(private readonly onInvoke: (request: UlxRequest) => void) {}
+  constructor(private readonly onInvoke: (request: Request) => void) {}
 
-  async invoke(ulx: UlxRequest): Promise<UlxProviderResponse> {
+  async invoke(ulx: Request): Promise<ProviderResponse> {
     this.onInvoke(ulx);
     this.callIndex += 1;
     return { status: 200, body: {}, headers: {} };
   }
 
   async toUlxResponse(
-    _payload: UlxProviderResponse,
-    ulx: UlxRequest,
-  ): Promise<UlxResponse> {
+    _payload: ProviderResponse,
+    ulx: Request,
+  ): Promise<Response> {
     const index = this.callIndex - 1;
     if (index === 0) {
       return {
@@ -493,11 +494,11 @@ class SequenceProviderAdapter implements UlxProviderAdapter {
   }
 }
 
-function createUlxRequest(overrides: Partial<UlxRequest> = {}): UlxRequest {
+function createRequest(overrides: Partial<Request> = {}): Request {
   return {
     id: "req",
     model: "model",
-    operation: UlxOperation.Chat,
+    operation: Operation.Chat,
     messages: [],
     tools: undefined,
     stream: false,

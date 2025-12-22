@@ -270,7 +270,7 @@ export class VertexProviderAdapter implements ProviderAdapter {
     }
 
     if (request.model && MAAS_MODEL_PATTERN.test(request.model)) {
-      const normalized = normalizeOpenAIProviderResponse(payload);
+      const normalized = normalizeOpenAIProviderResponse(payload, request);
       if ("error" in normalized) {
         return {
           id: request.id,

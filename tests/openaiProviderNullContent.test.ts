@@ -2,12 +2,12 @@ import { describe, expect, it } from "vitest";
 import {
   normalizeOpenAIProviderResponse,
   openAIResponseToUlx,
-} from "../src/ulx/providers/openai.js";
-import { UlxOperation, type UlxProviderResponse } from "../src/ulx/types.js";
+} from "../src/core/providers/openai.js";
+import { Operation, type ProviderResponse } from "../src/core/types.js";
 
 describe("OpenAI provider response normalization", () => {
   it("accepts `choices[].message.content: null`", () => {
-    const payload: UlxProviderResponse = {
+    const payload: ProviderResponse = {
       status: 200,
       headers: {},
       body: {
@@ -41,7 +41,7 @@ describe("OpenAI provider response normalization", () => {
     const ulx = openAIResponseToUlx(normalized.body, {
       id: "req-1",
       model: "vertex-openai-compatible",
-      operation: UlxOperation.Chat,
+      operation: Operation.Chat,
       messages: [],
       stream: false,
       parameters: {},

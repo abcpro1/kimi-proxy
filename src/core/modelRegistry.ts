@@ -83,7 +83,9 @@ export class ModelRegistry {
   }
 
   resolve(modelName: string, profile?: string): ModelVariant {
-    let variants = this.groups.get(modelName)?.filter((v) => !v.profile || v.profile === profile);
+    let variants = this.groups
+      .get(modelName)
+      ?.filter((v) => !v.profile || v.profile === profile);
 
     if (variants && variants.length > 0 && profile) {
       const filtered = variants.filter((v) => v.profile === profile);

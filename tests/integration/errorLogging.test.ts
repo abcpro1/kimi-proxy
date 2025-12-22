@@ -63,6 +63,14 @@ describe("Error Logging Integration", () => {
     expect(latest.url).toBe("/v1/chat/completions");
     // We expect model to be undefined/null in DB for schema validation error
     expect(latest.model).toBeFalsy();
+    // Now we have provider field set
+    expect(latest.provider).toBe("schema_validation_failed");
+    // Now we have error summaries
+    expect(latest.summary).toBeTruthy();
+    if (latest.summary) {
+      const summary = JSON.parse(latest.summary);
+      expect(summary.error_type).toBe("schema_validation");
+    }
   });
 
   it("logs 400 error when model resolution fails", async () => {
@@ -81,6 +89,11 @@ describe("Error Logging Integration", () => {
 
     expect(latest.status_code).toBe(400);
     expect(latest.model).toBe("unknown-model");
-    expect(latest.summary).toBeFalsy(); // No summary for errors usually unless we implemented it
+    expect(latest.summary).toBeTruthy(); // Now we have error summaries
+    if (latest.summary) {
+      const summary = JSON.parse(latest.summary);
+      expect(summary.error_type).toBe("model_resolution");
+      expect(summary.error_message).toContain("unknown-model");
+    }
   });
 });

@@ -532,6 +532,7 @@ async function handleRequest(
       method: req.method,
       url: req.url,
       statusCode: 400,
+      provider: "schema_validation_failed",
       startedAt,
       finishedAt: Date.now(),
       requestBody: req.body as JsonObject,
@@ -539,6 +540,7 @@ async function handleRequest(
       operation: options.operation,
       clientFormat: options.clientFormat,
       profile: options.profile,
+      summary: summarizeError(error, "schema_validation"),
     });
     reply.status(400).send(errorBody);
     return;
@@ -570,6 +572,7 @@ async function handleRequest(
       url: req.url,
       statusCode: 400,
       model,
+      provider: "resolution_failed",
       startedAt,
       finishedAt: Date.now(),
       requestBody: parsedBody as unknown as JsonObject,
@@ -577,6 +580,7 @@ async function handleRequest(
       operation: options.operation,
       clientFormat: options.clientFormat,
       profile: options.profile,
+      summary: summarizeError(error, "model_resolution"),
     });
     reply.status(400).send(errorBody);
     return;
@@ -685,6 +689,7 @@ async function handleRequest(
       responseBody: { error: errorDetails },
       providerRequestBody: null,
       providerResponseBody: null,
+      summary: summarizeError(error, "pipeline_execution"),
     });
     reply.status(500).send({ error: { message: "Internal proxy error" } });
   }
@@ -814,6 +819,14 @@ function summarize(response: Response): string {
     finish_reason: response.finish_reason,
     error: response.error,
     preview,
+  });
+}
+
+function summarizeError(error: unknown, errorType: string): string {
+  const errorMessage = error instanceof Error ? error.message : String(error);
+  return JSON.stringify({
+    error_type: errorType,
+    error_message: errorMessage.slice(0, 500), // Limit length
   });
 }
 

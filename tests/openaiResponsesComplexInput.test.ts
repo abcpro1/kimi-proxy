@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { OpenAIResponsesClientAdapter } from "../src/ulx/clientAdapters.js";
-import { buildOpenAIPayload } from "../src/ulx/providers/openai.js";
+import { OpenAIResponsesClientAdapter } from "../src/core/clientAdapters.js";
+import { buildOpenAIPayload } from "../src/core/providers/openai.js";
 
 describe("OpenAIResponsesClientAdapter Issue Reproduction", () => {
   type ToUlxInput = Parameters<OpenAIResponsesClientAdapter["toUlx"]>[0];

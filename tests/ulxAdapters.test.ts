@@ -2,12 +2,8 @@ import { describe, it, expect } from "vitest";
 import {
   OpenAIChatClientAdapter,
   OpenAIResponsesClientAdapter,
-} from "../src/ulx/clientAdapters.js";
-import {
-  UlxOperation,
-  type UlxRequest,
-  type UlxResponse,
-} from "../src/ulx/types.js";
+} from "../src/core/clientAdapters.js";
+import { Operation, type Request, type Response } from "../src/core/types.js";
 
 describe("OpenAIChatClientAdapter", () => {
   it("normalizes chat requests into ULX", () => {
@@ -20,7 +16,7 @@ describe("OpenAIChatClientAdapter", () => {
       {},
     );
 
-    expect(ulx.operation).toBe(UlxOperation.Chat);
+    expect(ulx.operation).toBe(Operation.Chat);
     expect(ulx.messages[0].content[0]).toMatchObject({
       type: "text",
       text: "hello",
@@ -29,10 +25,10 @@ describe("OpenAIChatClientAdapter", () => {
 
   it("renders ULX responses back to chat completions", () => {
     const adapter = new OpenAIChatClientAdapter();
-    const ulxResponse: UlxResponse = {
+    const ulxResponse: Response = {
       id: "resp-1",
       model: "gpt-4",
-      operation: UlxOperation.Chat,
+      operation: Operation.Chat,
       finish_reason: "stop",
       output: [
         {
@@ -44,10 +40,10 @@ describe("OpenAIChatClientAdapter", () => {
       ],
     };
 
-    const mockRequest: UlxRequest = {
+    const mockRequest: Request = {
       id: "req-1",
       model: "gpt-4",
-      operation: UlxOperation.Chat,
+      operation: Operation.Chat,
       messages: [],
       metadata: { clientFormat: "openai.chat-completions", headers: {} },
       parameters: {},
@@ -83,7 +79,7 @@ describe("OpenAIResponsesClientAdapter", () => {
       {},
     );
 
-    expect(ulx.operation).toBe(UlxOperation.Responses);
+    expect(ulx.operation).toBe(Operation.Responses);
     expect(ulx.tools).toBeDefined();
     expect(ulx.tools![0]).toMatchObject({
       type: "function",
@@ -109,7 +105,7 @@ describe("OpenAIResponsesClientAdapter", () => {
       {},
     );
 
-    expect(ulx.operation).toBe(UlxOperation.Responses);
+    expect(ulx.operation).toBe(Operation.Responses);
     expect(ulx.tools).toBeDefined();
     expect(ulx.tools![0]).toMatchObject({
       type: "function",

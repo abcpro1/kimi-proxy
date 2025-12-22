@@ -25,7 +25,9 @@ export interface JsonObject {
 }
 export type JsonValue = JsonPrimitive | JsonObject | JsonArray;
 
-export function isJsonObject(value: JsonValue): value is JsonObject {
+export function isJsonObject(
+  value: JsonValue | undefined,
+): value is JsonObject {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
@@ -240,3 +242,99 @@ export type Json = JsonValue;
 
 export const isMessage = (value: unknown): value is Message =>
   MessageSchema.safeParse(value).success;
+
+function jsonSchemaToZod(schema: JsonValue | undefined): z.ZodSchema {
+  if (!schema || typeof schema !== "object" || Array.isArray(schema))
+    return z.any();
+
+  const s = schema as Record<string, unknown>;
+  switch (s.type) {
+    case "object": {
+      const shape: Record<string, z.ZodSchema> = {};
+      const properties = (s.properties as Record<string, JsonValue>) || {};
+      const required = (s.required as string[]) || [];
+
+      for (const key in properties) {
+        let propSchema = jsonSchemaToZod(properties[key]);
+        if (!required.includes(key)) {
+          propSchema = propSchema.optional();
+        }
+        shape[key] = propSchema;
+      }
+
+      const zodObj = z.object(shape);
+      if (s.additionalProperties === false) {
+        return zodObj.strict();
+      } else {
+        return zodObj.passthrough();
+      }
+    }
+
+    case "array":
+      return z.array(jsonSchemaToZod((s.items as JsonValue) || {}));
+
+    case "string":
+      if (
+        Array.isArray(s.enum) &&
+        s.enum.length > 0 &&
+        s.enum.every((e: unknown) => typeof e === "string")
+      ) {
+        return z.enum(s.enum as [string, ...string[]]);
+      }
+      return z.string();
+
+    case "number":
+    case "integer":
+      return z.number();
+
+    case "boolean":
+      return z.boolean();
+
+    case "null":
+      return z.null();
+
+    default:
+      return z.any();
+  }
+}
+
+const toolSchemaCache = new WeakMap<Request, Record<string, z.ZodSchema>>();
+
+export function getToolSchemas(request: Request): Record<string, z.ZodSchema> {
+  let schemas = toolSchemaCache.get(request);
+  if (schemas) return schemas;
+
+  schemas = {};
+  for (const tool of request.tools ?? []) {
+    schemas[tool.name] = jsonSchemaToZod(tool.parameters);
+  }
+
+  toolSchemaCache.set(request, schemas);
+  return schemas;
+}
+
+function safeParseJson(str: string): unknown {
+  try {
+    return JSON.parse(str);
+  } catch {
+    return str;
+  }
+}
+
+export function findMatchingTool(
+  request: Request,
+  args: unknown,
+): string | null {
+  const schemas = getToolSchemas(request);
+  const matches: string[] = [];
+
+  const parsedArgs = typeof args === "string" ? safeParseJson(args) : args;
+
+  for (const [name, schema] of Object.entries(schemas)) {
+    if (schema.safeParse(parsedArgs).success) {
+      matches.push(name);
+    }
+  }
+
+  return matches.length === 1 ? matches[0] : null;
+}

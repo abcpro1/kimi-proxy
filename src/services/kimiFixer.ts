@@ -1,5 +1,11 @@
 import { logger } from "../utils/logger.js";
-import { isJsonObject, type JsonObject } from "../core/types.js";
+import {
+  isJsonObject,
+  type JsonObject,
+  type Request,
+  getToolSchemas,
+  findMatchingTool,
+} from "../core/types.js";
 
 const TOOL_BLOCK_RE =
   /<\|tool_call_begin\|>\s*(?<name>[^\s]+)\s*<\|tool_call_argument_begin\|>\s*(?<args>.*?)\s*<\|tool_call_end\|>/gs;
@@ -131,6 +137,7 @@ export interface KimiFixMetadata extends JsonObject {
   extractedFromContent: number;
   cleanedReasoningContent: boolean;
   cleanedMessageContent: boolean;
+  repairedToolNames: number;
 }
 
 export interface KimiFixResult {
@@ -138,13 +145,50 @@ export interface KimiFixResult {
   metadata: KimiFixMetadata;
 }
 
-export function fixKimiResponse(response: JsonObject): KimiFixResult {
+export function repairToolNames(
+  toolCalls: JsonObject[],
+  request: Request,
+): number {
+  const schemas = getToolSchemas(request);
+  const toolNames = new Set(Object.keys(schemas));
+  let repairedCount = 0;
+
+  for (const call of toolCalls) {
+    if (call.type !== "function" || !isJsonObject(call.function)) continue;
+
+    const fn = call.function as JsonObject;
+    if (typeof fn.name === "number") {
+      fn.name = String(fn.name);
+    }
+    const name = fn.name;
+    if (typeof name !== "string") continue;
+
+    // If name is already valid, skip
+    if (toolNames.has(name)) continue;
+
+    // Try to find a match
+    const match = findMatchingTool(request, fn.arguments);
+    if (match) {
+      logger.debug(`[KimiFixer] Repaired tool name: ${name} -> ${match}`);
+      fn.name = match;
+      repairedCount++;
+    }
+  }
+
+  return repairedCount;
+}
+
+export function fixKimiResponse(
+  response: JsonObject,
+  request: Request,
+): KimiFixResult {
   const metadata: KimiFixMetadata = {
     extractedToolCalls: 0,
     extractedFromReasoning: 0,
     extractedFromContent: 0,
     cleanedReasoningContent: false,
     cleanedMessageContent: false,
+    repairedToolNames: 0,
   };
 
   try {
@@ -237,6 +281,11 @@ export function fixKimiResponse(response: JsonObject): KimiFixResult {
       }
 
       if (aggregatedToolCalls.length) {
+        const repaired = repairToolNames(aggregatedToolCalls, request);
+        if (repaired > 0) {
+          metadata.repairedToolNames =
+            (metadata.repairedToolNames || 0) + repaired;
+        }
         message.tool_calls = aggregatedToolCalls;
         choice.finish_reason = "tool_calls";
       } else if ("tool_calls" in message) {

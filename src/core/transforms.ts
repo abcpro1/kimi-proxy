@@ -289,7 +289,7 @@ export class EnsureToolCallRequestTransform implements Transform {
 
       if (
         toolCalls.length === 1 &&
-        this.checkTerminationHeuristic(message, toolCalls[0])
+        this.checkTerminationHeuristic(message, toolCalls[0], request)
       ) {
         requestSyntheticResponse(request.state);
         logger.warn(
@@ -306,7 +306,13 @@ export class EnsureToolCallRequestTransform implements Transform {
   private checkTerminationHeuristic(
     message: Message,
     toolCall: ToolCall,
+    request: TransformContext["request"],
   ): boolean {
+    // Only apply heuristic to models with "kimi" in their name
+    if (!request.model.toLowerCase().includes("kimi")) {
+      return false;
+    }
+
     if (!hasCaseInsensitiveTerminationKeywords(message.content)) {
       return false;
     }
@@ -339,7 +345,7 @@ export class EnsureToolCallResponseTransform implements Transform {
     const response = context.response;
     if (!ensureState || !response) return;
 
-    if (this.checkTerminationHeuristic(response)) {
+    if (this.checkTerminationHeuristic(response, context.request)) {
       ensureState.pendingReminder = false;
       logger.info(
         { requestId: context.request.id },
@@ -456,7 +462,15 @@ export class EnsureToolCallResponseTransform implements Transform {
     return false;
   }
 
-  private checkTerminationHeuristic(response: Response): boolean {
+  private checkTerminationHeuristic(
+    response: Response,
+    request: TransformContext["request"],
+  ): boolean {
+    // Only apply heuristic to models with "kimi" in their name
+    if (!request.model.toLowerCase().includes("kimi")) {
+      return false;
+    }
+
     const messageBlock = response.output.find(
       (block) => block.type === "message",
     );

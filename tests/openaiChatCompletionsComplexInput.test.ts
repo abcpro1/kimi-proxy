@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { OpenAIChatClientAdapter } from "../src/ulx/clientAdapters.js";
+import { OpenAIChatClientAdapter } from "../src/core/clientAdapters.js";
 
 describe("OpenAIChatClientAdapter (input compatibility)", () => {
   it("accepts content parts without `type` fields", () => {

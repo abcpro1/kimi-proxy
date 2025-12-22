@@ -107,7 +107,7 @@ export class OpenRouterProviderAdapter implements ProviderAdapter {
       return toUlxErrorResponse(payload, request);
     }
 
-    const normalized = normalizeOpenAIProviderResponse(payload);
+    const normalized = normalizeOpenAIProviderResponse(payload, request);
     if ("error" in normalized) {
       return {
         id: request.id,

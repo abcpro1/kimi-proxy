@@ -42,7 +42,7 @@ const OpenAIToolCallSchema = z
     type: z.literal("function").optional(),
     function: z
       .object({
-        name: z.string(),
+        name: z.union([z.string(), z.number()]).transform(String),
         arguments: z.union([z.string(), z.record(z.unknown())]).optional(),
       })
       .passthrough(),
@@ -90,7 +90,7 @@ function normalizeToolCalls(
   toolCalls:
     | Array<{
         id?: string | null;
-        function?: { name?: string; arguments?: unknown } | null;
+        function?: { name?: unknown; arguments?: unknown } | null;
       }>
     | null
     | undefined,
@@ -99,13 +99,18 @@ function normalizeToolCalls(
   const normalized: ToolCall[] = [];
   for (const call of toolCalls) {
     const fn = call?.function;
-    if (!fn || typeof fn.name !== "string") continue;
+    if (!fn || (typeof fn.name !== "string" && typeof fn.name !== "number"))
+      continue;
+    const name = String(fn.name);
+    // default to rand id
     const id =
-      typeof call.id === "string" && call.id.length ? call.id : fn.name;
+      typeof call.id === "string" && call.id.length
+        ? call.id
+        : `${name}_call_${Math.random().toString(36).substring(2, 10)}`;
     normalized.push({
       id,
       type: "function",
-      name: fn.name,
+      name: name,
       arguments: safeJsonString(fn.arguments),
     });
   }
@@ -224,6 +229,7 @@ export function toOpenAIMessages(messages: Request["messages"]): JsonValue {
 
 export function normalizeOpenAIProviderResponse(
   payload: ProviderResponse,
+  request: Request,
 ): { body: OpenAIParsedResponse; kimi?: KimiFixMetadata } | { error: string } {
   const parsed = OpenAIResponseSchema.safeParse(payload.body);
   if (!parsed.success) {
@@ -236,7 +242,7 @@ export function normalizeOpenAIProviderResponse(
   }
 
   const cloned = structuredClone(parsed.data) as JsonObject;
-  const { response, metadata } = fixKimiResponse(cloned);
+  const { response, metadata } = fixKimiResponse(cloned, request);
   const normalized = OpenAIResponseSchema.safeParse(response);
   if (!normalized.success) {
     const issue =
@@ -388,7 +394,7 @@ export class OpenAIProviderAdapter implements ProviderAdapter {
       return toUlxErrorResponse(payload, request);
     }
 
-    const normalized = normalizeOpenAIProviderResponse(payload);
+    const normalized = normalizeOpenAIProviderResponse(payload, request);
     if ("error" in normalized) {
       return {
         id: request.id,

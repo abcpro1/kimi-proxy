@@ -3,10 +3,10 @@ import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { SignatureCache } from "../src/persistence/signatureCache.js";
-import { AnthropicMessagesClientAdapter } from "../src/ulx/clientAdapters.js";
-import { AnthropicProviderAdapter } from "../src/ulx/providers/anthropic.js";
-import { VertexProviderAdapter } from "../src/ulx/providers/vertex.js";
-import { UlxOperation, type UlxRequest } from "../src/ulx/types.js";
+import { AnthropicMessagesClientAdapter } from "../src/core/clientAdapters.js";
+import { AnthropicProviderAdapter } from "../src/core/providers/anthropic.js";
+import { VertexProviderAdapter } from "../src/core/providers/vertex.js";
+import { Operation, type Request } from "../src/core/types.js";
 
 describe("request conversion fidelity", () => {
   it("AnthropicMessagesClientAdapter preserves tool_result blocks", () => {
@@ -97,10 +97,10 @@ describe("request conversion fidelity", () => {
   it("AnthropicProviderAdapter maps tool calls/results into tool_use/tool_result", () => {
     const adapter = new AnthropicProviderAdapter({ apiKey: "test" });
 
-    const ulx: UlxRequest = {
+    const ulx: Request = {
       id: "req-1",
       model: "claude-test",
-      operation: UlxOperation.Chat,
+      operation: Operation.Chat,
       messages: [
         { role: "system", content: [{ type: "text", text: "sys" }] },
         { role: "user", content: [{ type: "text", text: "hi" }] },
@@ -138,7 +138,7 @@ describe("request conversion fidelity", () => {
 
     const payload = (
       adapter as unknown as {
-        buildAnthropicPayload: (ulx: UlxRequest) => Record<string, unknown>;
+        buildAnthropicPayload: (ulx: Request) => Record<string, unknown>;
       }
     ).buildAnthropicPayload(ulx);
 
@@ -162,10 +162,10 @@ describe("request conversion fidelity", () => {
   it("VertexProviderAdapter maps tool calls/results into functionCall/functionResponse", () => {
     const adapter = new VertexProviderAdapter();
 
-    const ulx: UlxRequest = {
+    const ulx: Request = {
       id: "req-1",
       model: "gemini-test",
-      operation: UlxOperation.Chat,
+      operation: Operation.Chat,
       messages: [
         { role: "system", content: [{ type: "text", text: "sys" }] },
         { role: "user", content: [{ type: "text", text: "hi" }] },
@@ -196,7 +196,7 @@ describe("request conversion fidelity", () => {
 
     const contents = (
       adapter as unknown as {
-        toVertexContents: (messages: UlxRequest["messages"]) => Array<{
+        toVertexContents: (messages: Request["messages"]) => Array<{
           role: string;
           parts: Array<Record<string, unknown>>;
         }>;
@@ -229,7 +229,7 @@ describe("request conversion fidelity", () => {
   it("VertexProviderAdapter groups parallel tool results into one user content", () => {
     const adapter = new VertexProviderAdapter();
 
-    const messages: UlxRequest["messages"] = [
+    const messages: Request["messages"] = [
       { role: "user", content: [{ type: "text", text: "hi" }] },
       {
         role: "assistant",
@@ -264,7 +264,7 @@ describe("request conversion fidelity", () => {
     const contents = (
       adapter as unknown as {
         toVertexContents: (
-          messages: UlxRequest["messages"],
+          messages: Request["messages"],
           model?: string,
         ) => Array<{
           role: string;
@@ -294,10 +294,10 @@ describe("request conversion fidelity", () => {
     const signatureCache = new SignatureCache(cacheDir);
     const adapter = new VertexProviderAdapter(undefined, signatureCache);
 
-    const ulxRequest: UlxRequest = {
+    const ulxRequest: Request = {
       id: "req-1",
       model: "google/gemini-3-pro-preview",
-      operation: UlxOperation.Chat,
+      operation: Operation.Chat,
       messages: [],
       tools: [],
       stream: false,
@@ -310,7 +310,7 @@ describe("request conversion fidelity", () => {
       adapter as unknown as {
         vertexResponseToUlx: (
           body: Record<string, unknown>,
-          ulx: UlxRequest,
+          ulx: Request,
         ) => { output: Array<Record<string, unknown>> };
       }
     ).vertexResponseToUlx(
@@ -337,7 +337,7 @@ describe("request conversion fidelity", () => {
         .tool_calls?.[0]?.id ?? "";
     expect(toolCallId).toBe("call_req-1_0");
 
-    const messages: UlxRequest["messages"] = [
+    const messages: Request["messages"] = [
       { role: "user", content: [{ type: "text", text: "hi" }] },
       {
         role: "assistant",
@@ -361,7 +361,7 @@ describe("request conversion fidelity", () => {
     const contents = (
       adapter as unknown as {
         toVertexContents: (
-          messages: UlxRequest["messages"],
+          messages: Request["messages"],
           model?: string,
         ) => Array<{
           role: string;
