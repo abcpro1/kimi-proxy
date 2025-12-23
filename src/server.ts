@@ -125,6 +125,30 @@ export async function createServer(
       batchSize: config.livestore.batchSize,
     });
     logger.info({ seeded }, "Seeded LiveStore log mirror");
+
+    // Setup garbage collection if maxRecords limit is configured
+    if (config.livestore.maxRecords && config.livestore.maxRecords > 0) {
+      const trimInterval = setInterval(async () => {
+        try {
+          const deleted = await liveStoreRuntime.trim(
+            config.livestore.maxRecords!,
+          );
+          if (deleted > 0) {
+            logger.debug(
+              { deleted, maxRecords: config.livestore.maxRecords },
+              "LiveStore trimmed old records",
+            );
+          }
+        } catch (error) {
+          logger.error({ err: error }, "Failed to trim LiveStore records");
+        }
+      }, 30000); // Run every 30 seconds
+
+      server.addHook("onClose", async () => {
+        clearInterval(trimInterval);
+      });
+    }
+
     server.addHook("onClose", async () => {
       await liveStoreRuntime.close();
     });

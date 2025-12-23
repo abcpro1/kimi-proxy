@@ -8,7 +8,9 @@ export async function syncLogs(
   options: { batchSize?: number } = {},
 ): Promise<number> {
   const batchSize = options.batchSize ?? 200;
-  let checkpoint = latestCheckpoint(store);
+  // Always start from the latest (empty checkpoint) to catch new logs,
+  // then work backwards.
+  let checkpoint: { timestamp?: string; id?: number } = {};
   let synced = 0;
 
   for (;;) {
@@ -26,6 +28,19 @@ export async function syncLogs(
 
     const payload = (await res.json()) as { items: LogDocType[] };
     if (!payload.items.length) break;
+
+    // Optimization: If we already have all items in this batch, we've likely
+    // connected with our local history, so we can stop.
+    if (payload.items.length > 0) {
+      const ids = payload.items.map((i) => `'${i.id}'`).join(",");
+      const countRes = store.query<Array<{ count: number }>>({
+        query: `SELECT COUNT(*) as count FROM logs WHERE id IN (${ids})`,
+        bindValues: {},
+      });
+      if ((countRes[0]?.count ?? 0) === payload.items.length) {
+        break;
+      }
+    }
 
     store.commit(
       { skipRefresh: true },

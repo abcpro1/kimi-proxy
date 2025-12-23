@@ -141,6 +141,7 @@ export interface LiveStoreRuntime {
     limit: number,
   ): Promise<LiveLogDoc[]>;
   latestCheckpoint(): Promise<{ timestamp: string; id: number } | undefined>;
+  trim(maxRecords: number): Promise<number>;
   close(): Promise<void>;
 }
 
@@ -213,17 +214,17 @@ export async function createLiveStoreRuntime(options: {
       const params: Record<string, string | number | null> = { limit };
       if (checkpoint.timestamp) {
         clauses.push(
-          "(timestamp > $ts OR (timestamp = $ts AND numeric_id > $id))",
+          "(timestamp < $ts OR (timestamp = $ts AND numeric_id < $id))",
         );
         params.ts = checkpoint.timestamp;
-        params.id = checkpoint.id ?? 0;
+        params.id = checkpoint.id ?? Number.MAX_SAFE_INTEGER;
       }
       const where = clauses.length ? `WHERE ${clauses.join(" AND ")}` : "";
       const rows = store.query<LiveLogDoc[]>({
         query: `
           SELECT * FROM logs
           ${where}
-          ORDER BY timestamp, numeric_id
+          ORDER BY timestamp DESC, numeric_id DESC
           LIMIT $limit
         `,
         bindValues: params,
@@ -244,6 +245,30 @@ export async function createLiveStoreRuntime(options: {
       const latest = rows[0];
       if (!latest) return undefined;
       return { timestamp: latest.timestamp, id: latest.numeric_id };
+    },
+    async trim(maxRecords: number) {
+      const countResult = store.query<Array<{ count: number }>>({
+        query: `SELECT COUNT(*) as count FROM logs`,
+        bindValues: {},
+      });
+      const currentCount = countResult[0]?.count ?? 0;
+      if (currentCount <= maxRecords) return 0;
+
+      const toDelete = currentCount - maxRecords;
+      const deleteResult = store.query<Array<{ deleted: number }>>({
+        query: `
+          DELETE FROM logs
+          WHERE id IN (
+            SELECT id FROM logs
+            ORDER BY timestamp ASC, numeric_id ASC
+            LIMIT @limit
+          )
+          RETURNING COUNT(*) as deleted
+        `,
+        bindValues: { limit: toDelete },
+      });
+
+      return deleteResult[0]?.deleted ?? 0;
     },
     async close() {
       await store.shutdown();

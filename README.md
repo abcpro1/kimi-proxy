@@ -137,6 +137,15 @@ The API runs on `http://127.0.0.1:8000` and serves the dashboard (built assets) 
 
 ## Configuration
 
+### Dashboard & LiveStore
+
+Control LiveStore sync behavior via environment variables:
+
+| Variable                | Default | Description                                                                                     |
+| ----------------------- | ------- | ----------------------------------------------------------------------------------------------- |
+| `LIVESTORE_BATCH`       | 50      | Batch size for dashboard sync (range: 1-500)                                                    |
+| `LIVESTORE_MAX_RECORDS` | 500     | Memory sliding window - max records to keep in LiveStore. Set to 0 to disable (not recommended) |
+
 ### Providers
 
 Set environment variables in `.env`:
@@ -168,6 +177,15 @@ models:
 ## Dashboard
 
 The web dashboard shows request/response logs and metrics. Access it at the root path when running the proxy. LiveStore metadata sync pulls from `/api/livestore/pull` in batches (size controlled by `LIVESTORE_BATCH`) and lazily fetches blobs on expansion. Build the dashboard with `bun run build:all` to serve static assets from the backend.
+
+### Performance Features
+
+- **Reverse-chronological loading**: Data loads from newest to oldest, providing immediate access to recent logs
+- **Memory-efficient virtualization**: Uses TanStack Virtual to render only visible rows
+- **Configurable sliding window**: Limit browser memory usage by setting `LIVESTORE_MAX_RECORDS` (see `.env.example`)
+- **Automatic garbage collection**: Old records beyond the window limit are automatically purged
+
+The dashboard uses reactive queries with TanStack Table and TanStack Virtual for fast, efficient rendering of large datasets.
 
 ## Development
 

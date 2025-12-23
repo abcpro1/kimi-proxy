@@ -38,6 +38,7 @@ export interface AppConfig {
   };
   livestore: {
     batchSize: number;
+    maxRecords?: number;
   };
   providers: {
     openai?: OpenAIConfig;
@@ -164,6 +165,9 @@ export function loadConfig(): AppConfig {
   const streamDelay = Number(process.env.STREAM_DELAY ?? "10");
   const streamChunkSize = Number(process.env.STREAM_CHUNK_SIZE ?? "5");
   const livestoreBatch = Number(process.env.LIVESTORE_BATCH ?? "50");
+  const livestoreMaxRecords = process.env.LIVESTORE_MAX_RECORDS
+    ? Number(process.env.LIVESTORE_MAX_RECORDS)
+    : 500;
 
   const openai = resolveOpenAI();
   const anthropic = resolveAnthropic();
@@ -196,7 +200,10 @@ export function loadConfig(): AppConfig {
     server: { host, port },
     logging: { dbPath, blobRoot },
     streaming: { delay: streamDelay, chunkSize: streamChunkSize },
-    livestore: { batchSize: Math.max(1, Math.min(500, livestoreBatch)) },
+    livestore: {
+      batchSize: Math.max(1, Math.min(500, livestoreBatch)),
+      maxRecords: livestoreMaxRecords,
+    },
     providers: { openai, anthropic, openrouter, vertex },
     models: modelRegistry,
   };

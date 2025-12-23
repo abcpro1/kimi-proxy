@@ -289,14 +289,14 @@ export class HybridLogStore {
     const clauses: string[] = [];
     const params: Record<string, unknown> = { limit };
     if (checkpoint.timestamp) {
-      clauses.push(`(timestamp > @ts OR (timestamp = @ts AND id > @id))`);
+      clauses.push(`(timestamp < @ts OR (timestamp = @ts AND id < @id))`);
       params.ts = checkpoint.timestamp;
-      params.id = checkpoint.id ?? 0;
+      params.id = checkpoint.id ?? Number.MAX_SAFE_INTEGER;
     }
     const where = clauses.length ? `WHERE ${clauses.join(" AND ")}` : "";
     const rows = this.db
       .prepare(
-        `SELECT * FROM logs ${where} ORDER BY datetime(timestamp), id LIMIT @limit`,
+        `SELECT * FROM logs ${where} ORDER BY datetime(timestamp) DESC, id DESC LIMIT @limit`,
       )
       .all(params as never) as HybridLogMetadata[];
     return { items: rows, total: rows.length, page: 1, pageSize: rows.length };

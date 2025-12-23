@@ -17,6 +17,7 @@ function cleanText(text: string): string {
   if (!text) return "";
   return text
     .replaceAll("(no content)", "")
+    .replace(/<tool_call>[a-zA-Z0-9_:-]+/g, "")
     .replace(/\n\s*\n\s*\n+/g, "\n\n")
     .trim();
 }
@@ -211,6 +212,31 @@ export function fixKimiResponse(
       let aggregatedToolCalls = Array.isArray(rawToolCalls)
         ? [...(rawToolCalls as unknown as JsonObject[])]
         : [];
+
+      // Handle 'reasoning' field if 'reasoning_content' is missing
+      if (typeof message.reasoning === "string" && !message.reasoning_content) {
+        message.reasoning_content = message.reasoning;
+      }
+
+      // Handle 'reasoning_details' if reasoning_content is still missing
+      if (
+        Array.isArray(message.reasoning_details) &&
+        !message.reasoning_content
+      ) {
+        const details = message.reasoning_details as Array<{
+          type?: string;
+          text?: string;
+        }>;
+        const text = details
+          .filter(
+            (d) => d.type === "reasoning.text" && typeof d.text === "string",
+          )
+          .map((d) => d.text as string)
+          .join("\n\n");
+        if (text) {
+          message.reasoning_content = text;
+        }
+      }
 
       if (typeof message.reasoning_content === "string") {
         const original = message.reasoning_content;
