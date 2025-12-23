@@ -40,7 +40,7 @@
     },
     "frontend": {
       "name": "llm-api-logs-ui",
-      "version": "0.1.4",
+      "version": "0.1.5",
       "dependencies": {
         "@livestore/adapter-web": "^0.3.1",
         "@livestore/livestore": "^0.3.1",
